@@ -247,29 +247,53 @@ def _off_topic(question: str) -> bool:
     return any(h in q for h in ("рецепт", "погода", "анекдот", "крипт"))
 
 
+# Demo counterparties / contract ids present in organizer KB (fail-open to retrieve).
+_DEMO_ENTITY_FRAGMENTS = (
+    "северн",
+    "альфа-трейд",
+    "альфа трейд",
+    "альфа-трейдинг",
+    "альфа трейдинг",
+    "а-08",
+    "п-17",
+    "пт-05",
+)
+_LEGAL_FORM_RE = re.compile(r"(?<!\w)(?:ооо|ип|ао|пао|зао|нао|оао)(?!\w)", re.IGNORECASE)
+_QUOTED_NAME_RE = re.compile(r"[«\"„“]([^»\"”]{2,80})[»\"”]")
+_CONTRACT_NO_RE = re.compile(
+    r"(?:№|#)\s*[\w./\-]+|(?<!\w)(?:а-\d{2}|п-\d{2}|пт-\d{2})(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _has_counterparty_or_contract_id(question: str) -> bool:
+    """True when the question already names a counterparty or contract identifier."""
+    low = question.lower().replace("ё", "е")
+    if _LEGAL_FORM_RE.search(low):
+        return True
+    if _QUOTED_NAME_RE.search(question):
+        return True
+    if _CONTRACT_NO_RE.search(low):
+        return True
+    if any(x in low for x in ("инн", "контрагент", "номер договора", "номер контракта")):
+        return True
+    if any(frag in low for frag in _DEMO_ENTITY_FRAGMENTS):
+        return True
+    return False
+
+
 def _is_ambiguous_contract(question: str) -> bool:
-    low = question.lower()
+    """Clarify only bare 'договор' questions without party/id/type anchors."""
+    low = question.lower().replace("ё", "е")
     if "договор" not in low:
         return False
-    anchors = (
-        "№",
-        "номер",
-        "контрагент",
-        "регламент",
-        "правоспособ",
-        "ооо",
-        "инн",
-        "аренды",
-        "поставк",
-        "а-08",
-        "п-17",
-        "пт-05",
-        "северн",
-        "альфа",
-    )
-    if any(a in low for a in anchors):
+    if _has_counterparty_or_contract_id(question):
         return False
-    return len(_tokens(question)) < 6
+    # Narrow corpus without a named party (still searchable).
+    type_anchors = ("регламент", "правоспособ", "аренд", "поставк", "кредитн")
+    if any(a in low for a in type_anchors):
+        return False
+    return len(_tokens(question)) < 8
 
 
 def _lexical_answer(citations: list[Citation]) -> str:

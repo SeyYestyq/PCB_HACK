@@ -77,6 +77,19 @@ def test_organizer_rent_grounded():
     assert "450" in r.answer or "аренд" in r.answer.lower()
 
 
+def test_organizer_rent_short_question_grounded():
+    """Exact smoke question: counterparty in quotes must not trigger clarify."""
+    if not ORGANIZER.is_dir() or not any(ORGANIZER.glob("*.txt")):
+        return
+    q = "Какая арендная плата по договору с ООО «Северный Склад»?"
+    r = answer_question(q, ORGANIZER)
+    assert r.status == "grounded", f"expected grounded, got {r.status}: {r.answer}"
+    assert r.citations
+    assert not r.missing
+    joined = " ".join(c.title.lower() + " " + c.quote.lower() for c in r.citations)
+    assert "северн" in joined or "аренд" in joined
+
+
 def test_organizer_maternity_abstain():
     if not ORGANIZER.is_dir() or not any(ORGANIZER.glob("*.txt")):
         return

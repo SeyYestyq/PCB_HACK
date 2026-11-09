@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     if (process.env.VERCEL) return [];
-    const upstream = (process.env.API_UPSTREAM ?? "http://127.0.0.1:8080").replace(
+    const upstream = (process.env.API_UPSTREAM ?? "http://127.0.0.1:8090").replace(
       /\/$/,
       "",
     );
