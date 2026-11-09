@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -10,18 +12,66 @@ ROOT = Path(__file__).resolve().parents[4]
 ORGANIZER_KB = ROOT / "data" / "organizer" / "kb"
 FIXTURE_KB = ROOT / "data" / "fixtures" / "kb.jsonl"
 CHUNK_CHARS = 1200
+LLM_TIMEOUT_SEC = 60
+
+
+def _load_dotenv(path: Path | None = None) -> None:
+    """Load KEY=VALUE from .env into os.environ if not already set. No secret logging."""
+    env_path = path or (ROOT / ".env")
+    if not env_path.is_file():
+        return
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            os.environ[key] = value
+    except OSError:
+        return
+
+
+_load_dotenv()
+
+
+def _env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value and value != name:
+            return value
+    return default
 
 
 def default_kb_path() -> Path:
     env = os.getenv("PSB_KB_PATH", "").strip()
     if env:
-        return Path(env)
+        p = Path(env)
+        return p if p.is_absolute() else (ROOT / p)
     if ORGANIZER_KB.is_dir() and any(ORGANIZER_KB.glob("*.txt")):
         return ORGANIZER_KB
     return FIXTURE_KB
 
 
 DEFAULT_KB = default_kb_path()
+
+
+def llm_configured() -> bool:
+    base = _env("LLM_BASE_URL", "BASE_URL", "OPENAI_BASE_URL")
+    key = _env("LLM_API_KEY", "OPENAI_API_KEY")
+    return bool(base and key)
+
+
+def _llm_settings() -> tuple[str, str, str]:
+    base = _env("LLM_BASE_URL", "BASE_URL", "OPENAI_BASE_URL").rstrip("/")
+    key = _env("LLM_API_KEY", "OPENAI_API_KEY")
+    model = _env("LLM_MODEL", "GEN_MODEL", "OPENAI_MODEL", default="deepseek-chat")
+    return base, key, model
 
 
 @dataclass
@@ -222,6 +272,66 @@ def _is_ambiguous_contract(question: str) -> bool:
     return len(_tokens(question)) < 6
 
 
+def _lexical_answer(citations: list[Citation]) -> str:
+    parts = [f"Согласно {c.title} ({c.span}): {c.quote}" for c in citations]
+    return " ".join(parts) + " Выводы ограничены найденными фрагментами базы знаний."
+
+
+def _citations_verified(text: str, citations: list[Citation]) -> bool:
+    if not text.strip() or not citations:
+        return False
+    return all(c.doc_id in text or c.title in text for c in citations)
+
+
+def _call_llm(question: str, citations: list[Citation]) -> str | None:
+    """OpenAI-compatible chat/completions. Returns polished text or None on failure."""
+    if not llm_configured():
+        return None
+    base, key, model = _llm_settings()
+    context_blocks = []
+    for i, c in enumerate(citations, 1):
+        context_blocks.append(
+            f"[{i}] doc_id={c.doc_id}\ntitle={c.title}\nspan={c.span}\nquote={c.quote}"
+        )
+    context = "\n\n".join(context_blocks)
+    system = (
+        "Ты юридический ассистент банка. Отвечай ТОЛЬКО по приложенным фрагментам базы знаний. "
+        "Не используй внешние знания и не выдумывай нормы. В ответе обязательно упомяни "
+        "название документа (title) или doc_id каждого использованного фрагмента. "
+        "Если фрагментов недостаточно — прямо скажи, что данных в базе не хватает."
+    )
+    user = f"Фрагменты базы знаний:\n{context}\n\nВопрос:\n{question}"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 1024,
+    }
+    url = f"{base}/chat/completions"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SEC) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        content = body["choices"][0]["message"].get("content", "")
+        if isinstance(content, str) and content.strip():
+            return " ".join(content.split())
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def answer_question(question: str, kb_path: Path | None = None) -> Answer:
     q = (question or "").strip()
     if not q:
@@ -256,6 +366,7 @@ def answer_question(question: str, kb_path: Path | None = None) -> Answer:
             missing=["релевантные документы по теме вопроса"],
         )
 
+    # Fail-closed: citations ONLY from retrieved KB spans (never from model knowledge).
     citations = [
         Citation(
             doc_id=h["doc_id"],
@@ -265,10 +376,24 @@ def answer_question(question: str, kb_path: Path | None = None) -> Answer:
         )
         for h in hits
     ]
-    parts = [f"Согласно {c.title} ({c.span}): {c.quote}" for c in citations]
-    text = " ".join(parts) + " Выводы ограничены найденными фрагментами базы знаний."
-    verified = all(c.doc_id in text or c.title in text for c in citations)
-    if not verified:
+
+    text: str | None = None
+    if llm_configured():
+        polished = _call_llm(q, citations)
+        if polished and _citations_verified(polished, citations):
+            text = polished
+        elif polished:
+            # Model answered but dropped citation anchors — append lexical anchors, keep KB cites.
+            lexical = _lexical_answer(citations)
+            merged = f"{polished} Источники: " + "; ".join(
+                f"{c.title} ({c.span})" for c in citations
+            )
+            text = merged if _citations_verified(merged, citations) else lexical
+
+    if not text:
+        text = _lexical_answer(citations)
+
+    if not _citations_verified(text, citations):
         return Answer(
             "abstain",
             "Не удалось безопасно связать черновик ответа с найденными фрагментами.",

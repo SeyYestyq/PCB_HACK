@@ -7,6 +7,11 @@ apps/web/.env.local
 *.key
 secrets/
 credentials/
+# Local key dumps outside / next to repo — never commit
+ыв
+**/ыв
+*.api_key
+*_API_KEY*
 
 # Go / uploads
 apps/api/bin/
