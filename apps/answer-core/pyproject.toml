@@ -1,0 +1,16 @@
+[project]
+name = "psb-answer-core"
+version = "0.1.0"
+description = "Shared retrieve → answer → verify core for PSB legal assistant"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+psb-answer = "answer_core.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

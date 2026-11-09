@@ -1,0 +1,66 @@
+# Env & secrets
+.env
+.env.*
+!.env.example
+apps/web/.env.local
+*.pem
+*.key
+secrets/
+credentials/
+
+# Go / uploads
+apps/api/bin/
+apps/api/data/
+/data/
+!/data/fixtures/
+!/data/fixtures/**
+!apps/api/internal/rag/data/
+!apps/api/internal/rag/data/*.jsonl
+
+# Dependencies / build
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+playwright-report/
+test-results/
+
+# Databases / local binaries
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.db
+postgres-data/
+redis-data/
+uploads/
+
+# Large / binary artifacts
+*.tgz
+*.bundle
+*.dylib
+*.so
+*.node
+*.wasm
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.cursor/
+
+# Deploy caches
+.vercel/
+.vercel

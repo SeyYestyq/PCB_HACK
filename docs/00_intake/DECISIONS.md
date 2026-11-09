@@ -1,0 +1,21 @@
+# Decisions log
+
+| Дата | Решение | Почему | Связь с ТЗ / аналогами |
+|---|---|---|---|
+| 2026-11-09 | Профиль: hackathon | Кейс Hack&Change × ПСБ | Формат сдачи + лидерборд |
+| 2026-11-09 | Стек: **Python (FastAPI) + React/Vite/TS + Postgres/pgvector** | Online-сабмит — `solution.py` / Python deps; эмбеддинги BGE-M3; поиск по документам → pgvector. Go отложен: общий core проще разделить на Python-пакет для бота и API | ТЗ: язык свободный; платформа даёт DeepSeek + BGE-M3 + optional rerank |
+| 2026-11-09 | Один shared answer-core для `solution.py` и веба | Иначе разъезд ответов судьи и демо | Ограничение «одна модель» + воспроизводимость |
+| 2026-11-09 | Приоритет фич: credibility > retrieval quality > UI polish > pitch | Вес экспертов 25% на контроль достоверности; допуск требует UI | Критерии оценки |
+| 2026-11-09 | Аналоги изучаем, не клонируем | Ошибки «чат без verify» | BA policy |
+| 2026-11-09 | В проект подтянуты заглушки monorepo (`apps/web`, `apps/api`, `docs/*`, docker) | Быстрый каркас чата/RAG/compose; продукт ПСБ поверх, не копия чужого ТЗ | Запрос: загрузить stubs |
+| 2026-11-09 | Стек заглушек (Next + Go) пока как scaffold; целевой для ПСБ уточняем на гейте | Online-сабмит тянет Python; UI можно оставить/сменить | Конфликт DECISIONS ранее vs stubs |
+| 2026-11-09 | Дизайн-скилл: **unslop** в `skills/unslop` (+ `.cursor/skills`) | Убрать AI-slop после UI; credit CC BY 4.0 | Запрос добавить unslop в дизайн |
+| 2026-11-09 | `solution.py` в корне репо → `apps/answer-core` | Один shared path с UI/API; автооценка без дублирования логики | ТЗ: solution.py + Docker прототип |
+| 2026-11-09 | Compose default: `answer` + `web`; postgres/redis — profile `full` | Быстрый `docker compose up --build` для демо | A9 one-command |
+| 2026-11-09 | NeuroLegal (Яндекс) — только **study**: берём паттерн «цитата/ссылка из своей БЗ» + дисклеймер помощника; **не** берём Гарант/внешние корпуса, Word-плагин, генерацию .docx/рекламу/мультимодальность, UI/бренд | ТЗ ПСБ: RAG-only по выданной KB + abstain; лендинг NeuroLegal прямо продаёт внешние источники Гарант | ANALOGS.md § NeuroLegal; BA_BRIEF must §2–4 |
+| 2026-11-09 | In-app NeuroLegal за **Яндекс ID**; **live audit** (Cursor browser session): sidebar + chat chrome + inline-цитаты + dialog «Источник» (span) + панель Источники умной папки + `/expert/flows` каталог; abstain/refuse UI **не пойман**; без сессии — Passport/403 | Deep link = продукт; cookies Passport не шарятся с агентом автоматически | ANALOGS.md NeuroLegal live UI |
+| 2026-11-09 | Flows NeuroLegal = каталог готовых команд/нейросценариев; **не** переносим wizard-flows в MVP; опц. только лёгкие starter/follow-up chips **после** verify-core | ТЗ: RAG+abstain > ширина фич; критерии credibility 25% | ANALOGS optional LegalChat #1–3 |
+| 2026-11-09 | **ГАРАНТ** = внешний corpus vendor (подписка/демо/API Коннект); для хакатона **не** источник ответов | ТЗ: только KB организаторов; внешнее ≠ обоснование claims | `GARANT_SOURCE.md`; ANALOGS § ГАРАНТ |
+| 2026-11-09 | Runtime: **без** live-fetch `base.garant.ru` / Коннект / ИСКРА; fail-closed RAG по локальному индексу | Иначе нарушение ТЗ и невоспроизводимость судьи | BA_BRIEF must §2–3 |
+| 2026-11-09 | Offline-enrichment из ГАРАНТ — только если файлы уже легально экспортированы **и** организаторы разрешили; иначе не трогаем | Лицензия + правило кейса важнее «удобной базы» | `GARANT_SOURCE.md` § offline-ingest |
+| 2026-11-09 | **LOCAL_DEV_LLM** (OpenRouter): default `deepseek/deepseek-v4.1-flash`; A/B `anthropic/claude-haiku-5.5`, `qwen/qwen3.8-flash`. Embeddings остаются BGE-M3. | Dev-итерации через OpenRouter; **submit/online-оценка — только платформенный DeepSeek V4.1 Flash**, без подмены модели судье. DeepSeek на OR ≈ паритет с хакатоном + Legal-rank + 1M ctx + низкая цена; Haiku 5.5 — жёстче «только из контекста»; Qwen3.8 Flash — дешёвый grounding/abstain. Ключ: `OPENROUTER_API_KEY` в gitignored `.env` (создать вручную после логина на openrouter.ai/keys). | ТЗ: одна платформенная LLM на сабмит; RAG fail-closed |
