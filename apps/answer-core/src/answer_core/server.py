@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .pipeline import answer_question
+from .pipeline import answer_question, default_kb_path
 
 app = FastAPI(title="PSB Legal Answer Core", version="0.1.0")
 
@@ -51,11 +51,17 @@ def health() -> dict:
 
 @app.post("/api/v1/ask", response_model=AskResponse)
 def ask(body: AskRequest) -> AskResponse:
-    kb = os.getenv("PSB_KB_PATH")
-    result = answer_question(body.question, Path(kb) if kb else None)
+    kb = default_kb_path()
+    result = answer_question(body.question, kb)
     return AskResponse(
         status=result.status,
         answer=result.answer,
         citations=[CitationOut(**c.__dict__) for c in result.citations],
         missing=result.missing,
     )
+
+
+@app.get("/api/v1/kb")
+def kb_info() -> dict:
+    path = default_kb_path()
+    return {"psb_kb_path": str(path), "exists": path.exists(), "env": os.getenv("PSB_KB_PATH", "")}

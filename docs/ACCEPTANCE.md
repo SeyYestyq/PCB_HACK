@@ -2,7 +2,7 @@
 
 | ID | Критерий ТЗ | Проверка | Status |
 |---|---|---|---|
-| A1 | Поиск только по базе знаний | нет внешних источников в grounded; retrieve по fixture/KB | **pass** (fixture; organizer KB blocker) |
+| A1 | Поиск только по базе знаний | нет внешних источников в grounded; retrieve по `data/organizer/kb` | **pass** (organizer TXT corpus wired 2026-11-09) |
 | A2 | Ответ со ссылками на положения | citations[] непустой при grounded | **pass** (unit) |
 | A3 | Отказ при недостатке данных | abstain + missing | **pass** (unit) |
 | A4 | Не отказываться, если ответ в базе | grounded на правоспособность | **pass** (unit) |
@@ -17,7 +17,8 @@
 
 ## Blockers
 
-- База знаний организаторов не в репо → `data/fixtures/kb.jsonl`. Подключить через `PSB_KB_PATH` / volume без выдумывания корпуса.
+- Organizer KB подключена: `data/organizer/kb` (21 TXT). Fixtures — только unit fallback.
+- Human gate «норм» ещё открыт.
 
 ## Demo
 

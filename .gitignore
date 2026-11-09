@@ -11,11 +11,22 @@ credentials/
 # Go / uploads
 apps/api/bin/
 apps/api/data/
-/data/
+# Ignore local runtime data, keep committed corpora
+/data/uploads/
+/data/*
 !/data/fixtures/
 !/data/fixtures/**
+!/data/organizer/
+!/data/organizer/**
 !apps/api/internal/rag/data/
 !apps/api/internal/rag/data/*.jsonl
+
+# Raw Google Drive unpack (canonical copy lives in data/organizer/)
+drive-download-*/
+
+# Local eval artifacts
+submission.csv
+apps/answer-core/.venv/
 
 # Dependencies / build
 node_modules/

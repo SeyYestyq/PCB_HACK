@@ -9,8 +9,10 @@ services:
     ports:
       - "8090:8090"
     environment:
-      PSB_KB_PATH: /data/fixtures/kb.jsonl
+      PSB_KB_PATH: ${PSB_KB_PATH:-/data/organizer/kb}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./data/organizer:/data/organizer:ro
     restart: unless-stopped
 
   web:

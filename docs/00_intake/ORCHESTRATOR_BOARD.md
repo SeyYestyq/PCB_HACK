@@ -2,7 +2,7 @@
 
 > Главный агент: `orchestrator`  
 > Статус: **ACTIVE** — ждём human «норм»  
-> Обновлено: 2026-11-09 (post-T5 → T6 + solution)
+> Обновлено: 2026-11-09 (organizer KB integrated)
 
 ## Now
 
@@ -16,11 +16,12 @@
 | T5 | unslop UI | design | audit+passes | **done** |
 | T5b | `solution.py` stub (shared core) | backend/orchestrator | root entry → JSON contract | **done** |
 | T6 | ACCEPTANCE + demo + compose | qa/orchestrator | checklist + docs/demo.md | **done** (unit+compose green; human gate open) |
+| T6b | Organizer KB → `data/organizer/` + wire PSB_KB_PATH | backend | txt loader + smoke asks | **done** |
 | T7 | Human final | human | «норм» | **next** |
 
 ## Blockers
 
-- База знаний организаторов ещё не в репо → работаем на `data/fixtures/` до появления папки данных.
+- Organizer KB в репо: `data/organizer/kb` (default over fixtures).
 - Не объявлять проект готовым без явного «норм».
 
 ## Human gates
