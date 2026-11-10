@@ -1,8 +1,8 @@
 # Orchestrator Board
 
 > Главный агент: `orchestrator`  
-> Статус: **ожидает человеческое норм** (не done)  
-> Обновлено: 2026-11-11 (этапы 1→5 закрыты по AC; ждём «норм»)
+> Статус: **принят человеком** («норм», 2026-11-11)  
+> Обновлено: 2026-11-11 (финал зафиксирован)
 
 ## Now
 
@@ -14,24 +14,23 @@
 | T14 | Strip markdown из answer | orchestrator | `strip_markdown` в pipeline/submission | **done** |
 | T15 | RERANKER_MODEL + MAX_WORKERS env | orchestrator | fail-open `/rerank`; batch workers | **done** |
 | T16 | ZIP сабмит инструкция/скрипт | orchestrator | `scripts/pack_submission_zip.sh` + docs | **done** |
-| T7 | Human final | human | явное «норм» | **ожидает человеческое норм** |
+| T7 | Human final | human | явное «норм» | **done** (принято человеком, 2026-11-11) |
 
 ## Blockers
 
-- Не объявлять проект готовым без явного «норм» / «ок» / «принимаю».
-- ZIP на платформу не грузить без человека.
+- ZIP на платформу не грузить без человека (отдельный шаг сабмита).
 
 ## Human gates
 
 - [x] «действуй» / старт фабрики  
 - [x] «давай все поэтапно с 1 по 5»  
-- [ ] финальное «норм»
+- [x] финальное «норм» (2026-11-11)
 
 ## Notes
 
 ### 1 — Готовность
 - `docs/00_intake/HUMAN_NORM_CHECKLIST.md`
-- Board: **ожидает человеческое норм**, без done на T7
+- Board: **принят человеком**; T7 / финал — **done**
 
 ### 2 — Демо 18/18
 - Soft scoreboard: `reports/demo_q_scoreboard.md`

@@ -13,12 +13,12 @@
 | A9 | Docker one-command | `docker compose up --build` (answer+web); `name: psb` | **pass** (verified 2026-11-09) |
 | A10 | solution.py / автооценка | root `solution.py` → answer-core JSON | **pass** |
 | A11 | unslop UI | design pass | **pass** (LegalChat unslop 2026-11-09) |
-| A12 | Human «норм» | — | **open** |
+| A12 | Human «норм» | чат «норм» | **pass** (2026-11-11) |
 
 ## Blockers
 
 - Organizer KB подключена: `data/organizer/kb` (21 TXT). Fixtures — только unit fallback.
-- Human gate «норм» ещё открыт.
+- Human gate «норм» закрыт (2026-11-11).
 
 ## Demo
 
