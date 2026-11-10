@@ -16,6 +16,7 @@ from psb_config import (
     LLM_TIMEOUT_SEC,
     MAX_QUESTION_CHARS,
     QUOTE_CHARS,
+    env,
     env_int,
     llm_configured,
     llm_settings,
@@ -23,7 +24,12 @@ from psb_config import (
 from psb_editions import extract_event_date, filter_kb_by_edition, needs_historical_law
 from psb_ingest import default_kb_path, load_kb
 from psb_retrieve import retrieve
-from psb_structure import sentence_bounded_excerpt
+from psb_structure import (
+    extract_contract_numbers,
+    extract_inns,
+    extract_quoted_names,
+    focused_excerpt,
+)
 from psb_textnorm import normalize, strip_markdown
 
 # Re-export for callers / tests
@@ -218,10 +224,37 @@ def _illegal(question: str) -> bool:
     )
 
 
+def _entity_cues(text: str) -> str:
+    """Contract numbers, INNs, quoted parties — not full prior questions (avoids topic bleed)."""
+    parts: list[str] = []
+    for num in extract_contract_numbers(text or ""):
+        parts.append(num)
+    for inn in extract_inns(text or ""):
+        parts.append(f"ИНН {inn}")
+    for name in extract_quoted_names(text or ""):
+        parts.append(f"«{name}»")
+    return " ".join(dict.fromkeys(parts))
+
+
 def _user_context(question: str, history: list[Turn]) -> str:
-    """Last question plus earlier user turns, so a follow-up still names the contract."""
-    previous = [turn.content for turn in history if turn.role == "user"]
-    return "\n".join([*previous[-4:], question]).strip()
+    """Last user ask + entity cues from history (dialog scope without prior-topic pollution)."""
+    cues: list[str] = []
+    for turn in history[-8:]:
+        cue = _entity_cues(turn.content)
+        if cue:
+            cues.append(cue)
+    # Also harvest entities from the current question itself (already included below).
+    head = " ".join(dict.fromkeys(cues))
+    if head:
+        return f"{head}\n{question}".strip()
+    return question.strip()
+
+
+def _llm_allowed() -> bool:
+    flag = env("PSB_LEXICAL_ONLY", default="").lower()
+    if flag in {"1", "true", "on", "yes"}:
+        return False
+    return llm_configured()
 
 
 def _scope_to_contract(kb: list[dict], cards: list) -> list[dict]:
@@ -293,10 +326,98 @@ def _lexical_answer(citations: list[Citation]) -> str:
     return " ".join(parts) + " Выводы ограничены найденными фрагментами базы знаний."
 
 
+_CLAIM_NUMBER = re.compile(
+    r"(?<![\w./])("
+    r"\d{1,3}(?:[ \u00a0]\d{3})+(?:[.,]\d+)?|"  # 10 000 000 / 450 000
+    r"\d+[.,]\d{2,}|"  # 6.2 clause-like or 1.5 days with 2+ decimals
+    r"\d{4,}|"  # plain 450000 / years 2024
+    r"\d+(?=\s*(?:млн|миллион|тыс|%|дн|рабоч))"  # 10 млн, 5 рабочих
+    r")",
+    re.IGNORECASE,
+)
+_NUMBER_UNIT = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(млн|миллион(?:а|ов)?|тыс(?:яч[аи]?)?|%|дн(?:я|ей|и)?|рабоч)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_claim_number(raw: str) -> str:
+    """Collapse separators so '10 000 000' ≡ '10000000' ≡ '10.000.000'."""
+    s = (raw or "").strip().lower().replace("\u00a0", " ")
+    s = s.replace(",", ".")
+    if re.fullmatch(r"\d+\.\d+", s):
+        # Keep clause-like 6.2 / 3.1 as-is (dot is structural).
+        return s
+    return re.sub(r"[\s.]", "", s)
+
+
+def _scale_amount(norm: str, unit: str) -> str | None:
+    """Map '10'+млн → '10000000' so short forms match digit quotes."""
+    if not norm or not re.fullmatch(r"\d+", norm):
+        return None
+    u = (unit or "").lower()
+    try:
+        value = int(norm)
+    except ValueError:
+        return None
+    if u.startswith("млн") or u.startswith("миллион"):
+        return str(value * 1_000_000)
+    if u.startswith("тыс"):
+        return str(value * 1_000)
+    return None
+
+
+def _extract_claim_numbers(text: str) -> set[str]:
+    """Significant digits/amounts — '10 млн' → '10000000'; skip lone single digits."""
+    found: set[str] = set()
+    spanned: set[tuple[int, int]] = set()
+    for m in _NUMBER_UNIT.finditer(text or ""):
+        norm = _normalize_claim_number(m.group(1))
+        if not norm:
+            continue
+        scaled = _scale_amount(norm, m.group(2))
+        found.add(scaled or norm)
+        spanned.add(m.span(1))
+    for m in _CLAIM_NUMBER.finditer(text or ""):
+        if m.span(1) in spanned:
+            continue
+        # Skip the digit that was already consumed as «N млн/тыс/%/дн».
+        if any(start <= m.start(1) < end for start, end in spanned):
+            continue
+        norm = _normalize_claim_number(m.group(1))
+        if not norm or re.fullmatch(r"\d", norm):
+            continue
+        found.add(norm)
+    return found
+
+
+def _quote_number_corpus(citations: list[Citation]) -> set[str]:
+    # Titles often carry edition years («ред. 2023»); lexical answers cite them.
+    blob = " ".join(f"{c.title} {c.span} {c.quote}" for c in citations)
+    return _extract_claim_numbers(blob)
+
+
+def _numbers_grounded(text: str, citations: list[Citation]) -> bool:
+    """Every significant number/amount in the answer must appear in retrieved quotes.
+
+    Soft gate: empty claim set passes; '10 млн' ≡ '10 000 000' via scale expansion;
+    missing numbers fail → caller falls back to lexical (quote-only) answer.
+    """
+    claims = _extract_claim_numbers(text)
+    if not claims:
+        return True
+    allowed = _quote_number_corpus(citations)
+    if not allowed:
+        return False
+    return claims.issubset(allowed)
+
+
 def _citations_verified(text: str, citations: list[Citation]) -> bool:
     if not text.strip() or not citations:
         return False
-    return all(c.doc_id in text or c.title in text for c in citations)
+    if not all(c.doc_id in text or c.title in text for c in citations):
+        return False
+    return _numbers_grounded(text, citations)
 
 
 def _history_block(history: list[Turn] | None) -> str:
@@ -474,32 +595,42 @@ def answer_question(
             doc_id=h["doc_id"],
             title=h["title"],
             span=h.get("section", ""),
-            quote=sentence_bounded_excerpt(h["text"], QUOTE_CHARS),
+            quote=focused_excerpt(search_q, h["text"], QUOTE_CHARS),
         )
         for h in hits[:3]
     ]
 
     text: str | None = None
-    if llm_configured():
+    lexical = _lexical_answer(citations)
+    if _llm_allowed():
         polished = _call_llm(q, citations, hist)
         if polished and _citations_verified(polished, citations):
             text = polished
         elif polished:
-            lexical = _lexical_answer(citations)
+            # Title/doc_id missing or invented numbers → attach sources, then
+            # number-verify again; still failing → pure lexical (quote-only).
             merged = f"{polished} Источники: " + "; ".join(
                 f"{c.title} ({c.span})" for c in citations
             )
-            text = merged if _citations_verified(merged, citations) else lexical
+            if _citations_verified(merged, citations):
+                text = merged
+            else:
+                # Invented amounts / missing title refs → quote-only lexical.
+                text = lexical
 
     if not text:
-        text = _lexical_answer(citations)
+        text = lexical
 
     if not _citations_verified(text, citations):
-        return Answer(
-            "abstain",
-            "Не удалось безопасно связать черновик ответа с найденными фрагментами.",
-            missing=["верифицируемые цитаты"],
-        )
+        # Lexical itself always cites titles; if numbers somehow fail, abstain.
+        if text is not lexical and _citations_verified(lexical, citations):
+            text = lexical
+        else:
+            return Answer(
+                "abstain",
+                "Не удалось безопасно связать черновик ответа с найденными фрагментами.",
+                missing=["верифицируемые цитаты"],
+            )
 
     if extract_event_date(search_q) is None and any("регламент" in c.title.lower() for c in citations):
         if "текущую дату" not in normalize(text):

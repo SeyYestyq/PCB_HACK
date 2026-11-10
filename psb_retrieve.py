@@ -1,9 +1,14 @@
-"""BM25 retrieval over structural KB chunks."""
+"""BM25 + optional dense/rerank retrieval over structural KB chunks.
+
+Ranking heuristics are corpus-agnostic: clause markers, lexical support,
+doc-kind affinity, superseded demotion. No demo counterparty/filename boosts.
+"""
 
 from __future__ import annotations
 
 import json
 import math
+import re
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -14,6 +19,16 @@ from psb_textnorm import normalize, tokens
 from psb_vectors import search as vector_search
 from psb_vectors import unit_key
 from psb_vectors import vectors_enabled
+
+_CLAUSE_IN_Q = re.compile(
+    r"(?:п(?:ункт)?\.?\s*|ст(?:ать)?\.?\s*)(\d+(?:\.\d+){0,2})",
+    re.IGNORECASE,
+)
+_CLAUSE_IN_TEXT = re.compile(r"(?:^|[\s\n])(\d+\.\d+(?:\.\d+)?)\.\s", re.MULTILINE)
+_AMOUNT_RE = re.compile(
+    r"\d[\d\s]{2,}\d|\d+\s*(?:млн|миллион)|процент|%\b",
+    re.IGNORECASE,
+)
 
 
 class BM25Index:
@@ -55,71 +70,270 @@ class BM25Index:
         return out
 
 
-def _topic_boost(question: str, row: dict) -> float:
+def _clauses_in_question(question: str) -> list[str]:
+    return [m.group(1) for m in _CLAUSE_IN_Q.finditer(question or "")]
+
+
+def _support_overlap(q_tokens: list[str], doc_tokens: list[str]) -> float:
+    """Normalized query↔chunk overlap in [0, 1] (reference RelevanceController idea)."""
+    if not q_tokens or not doc_tokens:
+        return 0.0
+    q_set = set(q_tokens)
+    shared = q_set & set(doc_tokens)
+    if not shared:
+        return 0.0
+    return min(1.0, len(shared) / max(len(q_set), 1))
+
+
+def _relevance_boost(question: str, row: dict) -> float:
+    """General legal-doc affinity — no hardcoded counterparties or demo amounts."""
     q = normalize(question)
-    blob = normalize(
-        f"{row.get('text', '')} {row.get('title', '')} {row.get('section', '')} {row.get('source_file', '')}"
-    )
+    title = normalize(row.get("title") or "")
+    section = normalize(row.get("section") or "")
+    text = row.get("text") or ""
+    blob = normalize(f"{text} {title} {section} {row.get('source_file', '')}")
     boost = 0.0
-    pairs = (
-        (("аренд", "склад", "северн"), 4.0),
-        (("испытан", "бухгалтер", "трудов"), 5.0),
-        (("тк", "стать", "70"), 3.0),
-        (("ндс", "ставк"), 3.0),
-        (("правоспособ", "кредит", "досье", "полномоч"), 5.0),
-        (("персональн", "152"), 3.0),
-        (("согласован", "регламент"), 3.0),
-        (("юротдел", "оригинал", "регламент", "переда"), 5.0),
-        (("поставк", "альфа"), 2.0),
-        (("гарант", "альфа", "талон"), 4.0),
-        (("упаковк", "доставк", "цен"), 4.0),
-        (("акт", "ключ", "возврат", "помещен"), 4.0),
-        (("претенз", "недостат", "дефект", "акт"), 8.0),
-        (("химк", "склад", "пропуск", "доступ", "транспорт"), 6.0),
-        (("упаковк", "доставк", "цен", "включ"), 6.0),
-        (("пособи", "беременност"), -8.0),  # not in KB — demote false friends
+
+    # Explicit clause refs in the question («п. 6.2», «ст. 70»).
+    for clause in _clauses_in_question(question):
+        if clause in section or re.search(rf"(?:^|[\s\n]){re.escape(clause)}\.\s", text):
+            boost += 10.0
+        elif clause in blob:
+            boost += 4.0
+
+    # Topic families by shared stems (corpus-agnostic).
+    families = (
+        (("аренд", "плат"), ("аренд", "плат"), 6.0),
+        (("испытан",), ("испытан", "тк"), 6.0),
+        (("бухгалтер",), ("испытан", "тк", "70"), 5.0),
+        (("ндс", "ставк"), ("ндс", "ставк", "налог"), 4.0),
+        (("правоспособ",), ("правоспособ", "устав", "полномоч"), 5.0),
+        (("персональн", "соглас", "152"), ("персональн", "соглас", "152"), 4.0),
+        (("согласован", "одобрен", "порог"), ("регламент", "согласован", "одобрен"), 8.0),
+        (("юротдел", "оригинал", "переда"), ("юридическ", "оригинал", "регламент", "хранени"), 6.0),
+        (("гарант",), ("гарант", "талон", "срок"), 5.0),
+        (("упаковк", "доставк"), ("упаковк", "доставк", "цен"), 5.0),
+        (("претенз", "дефект", "недостат"), ("претенз", "недостат", "акт", "дефект"), 8.0),
+        (("приёмк", "приемк", "качеств"), ("приёмк", "приемк", "качеств", "рабоч"), 8.0),
+        (("пропуск", "доступ", "круглосуточ"), ("доступ", "круглосуточ", "транспорт", "пропуск"), 6.0),
+        (("возврат", "ключ", "съезж"), ("возврат", "акт", "помещен", "ключ"), 5.0),
+        (("аванс", "предоплат"), ("аванс", "предоплат", "расчёт", "расчет"), 6.0),
+        (("архив",), ("архив", "выдач", "оригинал"), 5.0),
+        (("сезон", "срочн"), ("сезон", "срочн"), 5.0),
     )
-    for keys, weight in pairs:
-        # First key must appear in the question (topic intent), others may match blob.
-        if keys[0] in q and any(k in blob for k in keys):
+    for q_keys, doc_keys, weight in families:
+        if any(k in q for k in q_keys) and any(k in blob for k in doc_keys):
             boost += weight
-    # Prefer ТК ст.70 for probation questions over НК ст.284
-    if any(k in q for k in ("испытан", "бухгалтер")):
-        if "тк" in blob and "70" in blob:
-            boost += 8.0
-        if "нк" in blob and "284" in blob:
-            boost -= 6.0
-    # GD approval / thresholds live in the company regulation, not in contracts.
-    # Do not boost contract preambles that merely mention «генеральный директор».
-    if any(k in q for k in ("одобрен", "порог")) or (
+
+    # Approval / amount questions → company regulation over contract preamble.
+    asks_approval = any(k in q for k in ("одобрен", "порог")) or (
         "генеральн" in q and any(k in q for k in ("млн", "миллион", "сумм", "одобрен"))
-    ):
-        text = row.get("text") or ""
-        if "регламент" in blob:
-            boost += 14.0
-            if "10 000 000" in text or "десяти миллион" in blob:
+    )
+    if asks_approval:
+        if "регламент" in title:
+            boost += 18.0
+            if any(k in blob for k in ("одобрен", "генеральн", "порог", "свыше")):
                 boost += 10.0
-            if "15 000 000" in text or "пятнадцат" in blob:
-                boost += 4.0
-            if "утратила силу" in blob or "утратил силу" in blob:
-                boost -= 14.0
-        elif "договор" in blob and "регламент" not in blob:
-            boost -= 10.0
-    # Prepayment / settlement clauses for advance-payment questions.
-    if any(k in q for k in ("аванс", "предоплат", "оплат")):
-        if any(k in blob for k in ("предоплат", "порядк расчёт", "4.1", "4.2")):
-            boost += 12.0
-        if "ответственност" in blob and "гарант" in blob:
-            boost -= 4.0
-    # Claim attachments: prefer acceptance/defect clause over dispute §8.
-    if any(k in q for k in ("претенз", "дефект", "недостатк", "прилож")):
+            if _AMOUNT_RE.search(text):
+                boost += 8.0
+        elif "регламент" in blob:
+            boost += 10.0
+        elif "договор" in title and "регламент" not in title:
+            # Date/year overlap with a contract must not beat the regulation unit.
+            boost -= 16.0
+        # Prefer the clause that states the threshold, not a cover «утратила силу» stub.
+        if "утратила силу" in blob or "утратил силу" in blob:
+            if not any(k in blob for k in ("одобрен", "свыше", "миллион")):
+                boost -= 12.0
+
+    # Prefer defect/acceptance act language over bare dispute jurisdiction.
+    if any(k in q for k in ("претенз", "дефект", "недостат", "прилож")):
         if any(k in blob for k in ("акт о выявлен", "акт о недостат", "выявленных недостат")):
-            boost += 12.0
-        if "8.1" in blob and "арбитраж" in blob:
-            boost -= 8.0
-    if "утратила силу" in blob or "редакция утратила" in blob:
-        boost -= 8.0
+            boost += 10.0
+        if "арбитраж" in blob and "акт о" not in blob:
+            boost -= 6.0
+
+    # Quality-check follow-ups should not stick on warranty-only clauses.
+    if any(k in q for k in ("качеств", "приёмк", "приемк")) and "гарант" in blob:
+        if not any(k in blob for k in ("качеств", "приёмк", "приемк", "рабоч")):
+            boost -= 6.0
+
+    # Superseded editions: demote unless the question asks about old/repealed text.
+    if row.get("superseded") or "утратил силу" in blob or "утратила силу" in blob:
+        if not any(k in q for k in ("утративш", "старой", "редакци 20", "в 20")):
+            # Keep mild demotion; edition filter already drops when no event date.
+            boost -= 4.0
+
+    # Law code affinity: ТК vs НК when question stems match.
+    if any(k in q for k in ("испытан", "трудов", "бухгалтер")):
+        if "тк" in blob and re.search(r"\b70\b", blob):
+            boost += 6.0
+        if "нк" in blob and "284" in blob:
+            boost -= 5.0
+
     return boost
+
+
+def _expand_queries(question: str) -> list[str]:
+    """Corpus-agnostic lexical expansions (not demo counterparties / amounts).
+
+    Returns the original plus 0–2 short paraphrases. Fail-safe: caller ignores
+    empty/broken variants; never invents party names or numeric thresholds.
+    """
+    q = (question or "").strip()
+    if not q:
+        return []
+    variants: list[str] = [q]
+    nq = normalize(q)
+    # Legal synonym hedges — stems/phrases that appear across typical bank KB docs.
+    hedges: list[tuple[tuple[str, ...], str]] = (
+        (("аренд", "плат"), "арендная плата срок внесения"),
+        (("аренд",), "договор аренды плата"),
+        (("одобрен", "порог"), "одобрение генерального директора порог"),
+        (("одобрен",), "согласование сделки регламент"),
+        (("генеральн", "директор"), "одобрение генерального директора сумма"),
+        (("испытан",), "срок испытания трудовой кодекс"),
+        (("бухгалтер",), "главный бухгалтер срок испытания"),
+        (("претенз", "недостат"), "акт о выявленных недостатках претензия"),
+        (("претенз",), "претензионный порядок акт недостатков"),
+        (("приёмк", "качеств"), "проверка качества рабочих дней приёмка"),
+        (("приемк", "качеств"), "проверка качества рабочих дней приемка"),
+        (("гарант",), "гарантийный срок талон"),
+        (("предоплат", "аванс"), "аванс предоплата порядок расчётов"),
+        (("упаковк", "доставк"), "стоимость доставки упаковки цена"),
+        (("правоспособ",), "правоспособность устав полномочия"),
+        (("персональн",), "персональные данные согласие"),
+        (("архив", "оригинал"), "хранение оригиналов архив выдача"),
+        (("юротдел", "оригинал"), "передача оригинала в юридический отдел"),
+        (("ндс",), "ставка НДС налог"),
+        (("круглосуточ", "доступ"), "круглосуточный доступ пропуск"),
+    )
+    for keys, phrase in hedges:
+        if not all(k in nq for k in keys):
+            continue
+        if normalize(phrase) in nq:
+            continue
+        variants.append(phrase)
+        if len(variants) >= 3:
+            break
+    # Deduplicate while preserving order; cap at 3 total.
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        key = normalize(item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _retrieve_one(
+    question: str,
+    kb: list[dict],
+    corpus: list[list[str]],
+    index: BM25Index,
+    *,
+    k: int,
+    catalog: list | None,
+    primary_question: str,
+) -> list[dict]:
+    """Single-query BM25 + boost path. Uses primary_question for catalog/gates."""
+    q_tokens = tokens(question)
+    if not q_tokens:
+        return []
+    primary_tokens = tokens(primary_question) or q_tokens
+
+    preferred_docs: set[str] = set()
+    if catalog:
+        for card in match_catalog(primary_question, catalog):
+            preferred_docs.update(card.doc_ids)
+
+    ranked: list[tuple[float, float, dict]] = []
+    scores = index.scores(q_tokens)
+    for i, row in enumerate(kb):
+        shared = set(q_tokens) & set(corpus[i])
+        boost = _relevance_boost(primary_question, row)
+        # Light boost from the expansion phrase itself when it matches the unit.
+        if question != primary_question:
+            boost += 0.5 * _relevance_boost(question, row)
+        overlap = _support_overlap(primary_tokens, corpus[i])
+        if len(shared) < 2 and scores[i] < 3.5 and boost < 3.0:
+            continue
+        score = scores[i] + boost + 4.0 * overlap
+        if preferred_docs and row.get("doc_id") in preferred_docs:
+            score += 6.0
+        markers = ("уран", "экспорт", "лиценз", "крипт", "рецепт", "анекдот")
+        qn = normalize(primary_question)
+        if any(m in qn for m in markers) and boost < 3.0 and overlap < 0.15:
+            continue
+        if score > 0:
+            ranked.append((score, overlap, row))
+
+    ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    if not ranked:
+        return []
+
+    best = ranked[0][0]
+    if best < 2.0:
+        return []
+
+    top_overlap = ranked[0][1]
+    top_boost = _relevance_boost(primary_question, ranked[0][2])
+    if top_overlap < 0.08 and top_boost < 5.0 and best < 8.0:
+        return []
+
+    strong = [r for s, _ov, r in ranked if s >= max(2.0, best * 0.4)]
+    needles = _needle_patterns(primary_question)
+    if needles:
+        def needle_hits(row: dict) -> int:
+            blob = f"{row.get('section', '')} {row.get('text', '')}"
+            return sum(1 for n in needles if n.search(blob))
+
+        strong = sorted(
+            strong,
+            key=lambda r: (
+                needle_hits(r),
+                _support_overlap(
+                    primary_tokens,
+                    tokens(
+                        f"{r.get('title', '')} {r.get('section', '')} {r.get('text', '')}"
+                    ),
+                ),
+            ),
+            reverse=True,
+        )
+
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for row in strong:
+        key = (row.get("doc_id", ""), row.get("section", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if len(out) >= max(k, 8):
+            break
+    return out
+
+
+def _rrf_merge(result_lists: list[list[dict]], k: int) -> list[dict]:
+    """Reciprocal rank fusion across query variants (fail-safe union)."""
+    if not result_lists:
+        return []
+    if len(result_lists) == 1:
+        return result_lists[0][:k]
+    scores: dict[str, float] = {}
+    rows: dict[str, dict] = {}
+    for group in result_lists:
+        for rank, row in enumerate(group):
+            key = unit_key(row)
+            rows[key] = row
+            scores[key] = scores.get(key, 0.0) + 1.0 / (60.0 + rank + 1.0)
+    ordered = sorted(scores, key=lambda item: scores[item], reverse=True)
+    return [rows[key] for key in ordered[:k]]
 
 
 def retrieve(
@@ -139,9 +353,7 @@ def retrieve(
         for r in kb
     ]
     index = BM25Index(corpus)
-    # Abstain only when the distinctive words are absent and nothing specific remains.
-    # «пособие по беременности» has no such stem in the corpus; «арендная плата» does.
-    # Absolute idf>=3 needs a large corpus; after catalog scope n can be ~5 and max idf≈1.4.
+    # Abstain when distinctive query terms are absent from the (possibly scoped) corpus.
     _stop = {
         "как",
         "какой",
@@ -165,57 +377,67 @@ def retrieve(
     }
     content = [term for term in q_tokens if len(term) >= 4 and term not in _stop]
     unseen = [term for term in content if len(term) >= 5 and term not in index.idf]
-    idf_cut = 3.0 if index.n >= 40 else 0.05
+    # On a tiny scoped corpus max IDF is small; use a relative cut, not a fixed 0.05.
+    if index.n >= 40:
+        idf_cut = 3.0
+    else:
+        max_idf = max((index.idf.get(t, 0.0) for t in content), default=0.0)
+        idf_cut = max(0.01, max_idf * 0.25) if max_idf else 0.01
     seen_specific = [term for term in content if index.idf.get(term, 0.0) >= idf_cut]
-    if len(unseen) >= 2 and not seen_specific:
-        return []
-    scores = index.scores(q_tokens)
-
-    # Catalog narrowing: boost matched counterparties' docs
-    preferred_docs: set[str] = set()
-    if catalog:
-        for card in match_catalog(question, catalog):
-            preferred_docs.update(card.doc_ids)
-
-    ranked: list[tuple[float, dict]] = []
-    for i, row in enumerate(kb):
-        shared = set(q_tokens) & set(corpus[i])
-        boost = _topic_boost(question, row)
-        # Ignore weak single-word hits on generic terms unless topic boost fires.
-        if len(shared) < 2 and scores[i] < 3.5 and boost < 3.0:
-            continue
-        score = scores[i] + boost
-        if preferred_docs and row.get("doc_id") in preferred_docs:
-            score += 6.0
-        # Out-of-corpus markers: skip unless topic boost already selected the family.
-        markers = ("уран", "экспорт", "лиценз", "крипт", "рецепт", "анекдот")
-        qn = normalize(question)
-        if any(m in qn for m in markers) and boost < 3.0:
-            continue
-        if score > 0:
-            ranked.append((score, row))
-
-    ranked.sort(key=lambda x: x[0], reverse=True)
-    if not ranked:
+    # Also treat any in-corpus content term as evidence the question is about this KB.
+    seen_any = [term for term in content if term in index.idf]
+    if len(unseen) >= 2 and not seen_specific and len(seen_any) < 2:
         return []
 
-    best = ranked[0][0]
-    if best < 2.0:
-        return []
+    # Multi-query: original + lexical hedges; fail-safe → single query on error/empty.
+    try:
+        variants = _expand_queries(question) or [question]
+    except Exception:
+        variants = [question]
 
-    strong = [r for s, r in ranked if s >= max(2.0, best * 0.4)]
-    # Deduplicate by (doc_id, section) keeping order
-    seen: set[tuple[str, str]] = set()
-    out: list[dict] = []
-    for row in strong:
-        key = (row.get("doc_id", ""), row.get("section", ""))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(row)
-        if len(out) >= k:
-            break
-    return _fuse(question, kb, out, k)
+    lists: list[list[dict]] = []
+    for variant in variants:
+        try:
+            hits = _retrieve_one(
+                variant,
+                kb,
+                corpus,
+                index,
+                k=k,
+                catalog=catalog,
+                primary_question=question,
+            )
+        except Exception:
+            hits = []
+        if hits:
+            lists.append(hits)
+    if not lists:
+        return []
+    fused_lexical = _rrf_merge(lists, max(k, 8))
+    return _fuse(question, kb, fused_lexical, k)
+
+
+def _needle_patterns(question: str) -> list[re.Pattern[str]]:
+    """Topic needles for soft reordering — patterns, not demo filenames."""
+    q = normalize(question)
+    out: list[re.Pattern[str]] = []
+    for clause in _clauses_in_question(question):
+        out.append(re.compile(rf"(?:^|[\s\n]){re.escape(clause)}\.\s"))
+    pairs = (
+        (("претенз", "дефект", "недостат", "прилож"), r"акт о (?:выявлен|недостат)|недостатк"),
+        (("качеств", "приёмк", "приемк"), r"качеств|рабочих дней|приёмк|приемк"),
+        (("аренд", "плат"), r"арендн\w*\s+плат|\d[\d\s]{3,}\d"),
+        (("гарант",), r"гарантийн|талон"),
+        (("предоплат", "аванс"), r"предоплат|аванс"),
+        (("упаковк", "доставк"), r"упаковк|доставк"),
+        (("одобрен", "порог", "генеральн"), r"одобрен|свыше|генеральн\w*\s+директор|миллион"),
+        (("круглосуточ", "доступ", "пропуск"), r"круглосуточ|беспрепятствен"),
+        (("оригинал", "юротдел", "архив"), r"юридическ|оригинал|архив"),
+    )
+    for keys, pat in pairs:
+        if any(k in q for k in keys):
+            out.append(re.compile(pat, re.IGNORECASE))
+    return out
 
 
 def _fuse(question: str, kb: list[dict], lexical: list[dict], k: int) -> list[dict]:
@@ -287,7 +509,6 @@ def _optional_rerank(question: str, rows: list[dict], k: int) -> list[dict]:
                 indices.append(item)
         ordered = [rows[i] for i in indices if 0 <= i < len(rows)]
         if ordered:
-            # Append any RRF leftovers not returned by the reranker.
             seen = {unit_key(r) for r in ordered}
             for row in rows:
                 key_u = unit_key(row)

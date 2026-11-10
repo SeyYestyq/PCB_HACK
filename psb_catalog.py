@@ -40,7 +40,9 @@ _SKIP_NAME_STEMS = {
     "клиент",
     "общество",
 }
-_OWN_COMPANY_STEMS = {"меридиан"}
+# Seed only; runtime also treats frequent preamble names as "own" when detected.
+_OWN_COMPANY_STEMS_SEED = {"меридиан"}
+_OWN_COMPANY_STEMS: set[str] = set(_OWN_COMPANY_STEMS_SEED)
 
 
 def _norm_contract(raw: str) -> str:
@@ -59,7 +61,34 @@ def _prefer_counterparties(cards: list[CounterpartyCard]) -> list[CounterpartyCa
     return preferred or cards
 
 
+def _detect_own_stems(kb: list[dict]) -> set[str]:
+    """Names quoted in many company preambles are likely the bank/org itself."""
+    counts: dict[str, int] = {}
+    docs = 0
+    seen: set[str] = set()
+    for row in kb:
+        doc_id = row.get("doc_id") or ""
+        if not doc_id or doc_id in seen:
+            continue
+        if row.get("kind") not in {"company", "amendment", "other"}:
+            continue
+        seen.add(doc_id)
+        docs += 1
+        full = row.get("full_text") or row.get("text") or ""
+        for name in extract_quoted_names(full[:900]):
+            key = stem(name)
+            if key and key not in _SKIP_NAME_STEMS:
+                counts[key] = counts.get(key, 0) + 1
+    if docs < 3:
+        return set(_OWN_COMPANY_STEMS_SEED)
+    threshold = max(2, docs // 2)
+    detected = {k for k, n in counts.items() if n >= threshold}
+    return detected | set(_OWN_COMPANY_STEMS_SEED)
+
+
 def build_catalog(kb: list[dict]) -> list[CounterpartyCard]:
+    global _OWN_COMPANY_STEMS
+    _OWN_COMPANY_STEMS = _detect_own_stems(kb)
     by_key: dict[str, CounterpartyCard] = {}
     seen_docs: set[str] = set()
     for row in kb:
@@ -257,17 +286,40 @@ def needs_clarify_contract(question: str, catalog: list[CounterpartyCard]) -> tu
             options.append(label)
         return True, options
 
-    # Bare «договор» / vague «Альфа» without unique card.
-    if "альфа" in q and len(matches) != 1:
-        alphas = [c for c in catalog if "альфа" in normalize(c.name)]
-        if len(alphas) > 1:
-            options = [
-                f"ООО «{c.name}»"
-                + (f", ИНН {c.inn}" if c.inn else "")
-                + (f", договор № {c.contract_numbers[0]}" if c.contract_numbers else "")
-                for c in alphas
-            ]
-            return True, options
+    # Vague shared prefix of several counterparties («Альфа…») without a unique card.
+    if len(matches) != 1:
+        prefix_groups: dict[str, list[CounterpartyCard]] = {}
+        for card in catalog:
+            if not _is_real_counterparty(card.name):
+                continue
+            name_n = normalize(card.name)
+            toks = name_n.replace("-", " ").split()
+            if not toks:
+                continue
+            prefix = toks[0]
+            if len(prefix) < 4 or prefix not in q:
+                continue
+            # Longer unique form already in the question → not vague.
+            if _name_in_question(card.name, q):
+                continue
+            prefix_groups.setdefault(prefix, []).append(card)
+        for prefix, cards in prefix_groups.items():
+            uniq: list[CounterpartyCard] = []
+            seen_names: set[str] = set()
+            for card in cards:
+                key = normalize(card.name)
+                if key in seen_names:
+                    continue
+                seen_names.add(key)
+                uniq.append(card)
+            if len(uniq) > 1:
+                options = [
+                    f"ООО «{c.name}»"
+                    + (f", ИНН {c.inn}" if c.inn else "")
+                    + (f", договор № {c.contract_numbers[0]}" if c.contract_numbers else "")
+                    for c in uniq
+                ]
+                return True, options
 
     # Legal form or quotes alone are not enough when catalog has no unique hit.
     type_anchors = ("регламент", "правоспособ", "аренд", "поставк", "кредитн", "ндс")

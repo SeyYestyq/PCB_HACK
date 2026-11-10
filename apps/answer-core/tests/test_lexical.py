@@ -5,8 +5,17 @@ from pathlib import Path
 from answer_core.pipeline import load_kb
 from psb_catalog import build_catalog, match_catalog
 from psb_editions import extract_event_date, filter_kb_by_edition
-from psb_pipeline import _scope_to_contract, _status_from_text, _user_context, parse_dialog
-from psb_retrieve import retrieve
+from psb_pipeline import (
+    Citation,
+    _citations_verified,
+    _extract_claim_numbers,
+    _numbers_grounded,
+    _scope_to_contract,
+    _status_from_text,
+    _user_context,
+    parse_dialog,
+)
+from psb_retrieve import _expand_queries, retrieve
 
 ROOT = Path(__file__).resolve().parents[3]
 ORGANIZER = ROOT / "data" / "organizer" / "kb"
@@ -148,3 +157,45 @@ def test_dialog_q18_current_reg_not_2023():
     titles = " ".join(r.get("title") or "" for r in filtered).lower()
     assert "2025" in titles or "ред 2025" in titles
     assert "утратил" not in titles
+
+
+def test_claim_numbers_scale_million():
+    assert "10000000" in _extract_claim_numbers("порог 10 млн рублей")
+    assert "10000000" in _extract_claim_numbers("порог 10 000 000 рублей")
+    assert "450000" in _extract_claim_numbers("плата 450 000 руб.")
+
+
+def test_numbers_grounded_rejects_invented_amount():
+    cites = [
+        Citation(
+            doc_id="reg-1",
+            title="Регламент 2023",
+            span="4.1",
+            quote="Сделки свыше 10 000 000 рублей требуют одобрения генерального директора.",
+        )
+    ]
+    ok = "Согласно Регламент 2023 (4.1): порог 10 млн."
+    assert _numbers_grounded(ok, cites)
+    assert _citations_verified(ok, cites)
+    bad = "Согласно Регламент 2023 (4.1): порог 15 млн рублей."
+    assert not _numbers_grounded(bad, cites)
+    assert not _citations_verified(bad, cites)
+
+
+def test_expand_queries_no_counterparty_hardcode():
+    variants = _expand_queries(
+        "Нужно ли одобрение генерального директора по сумме сделки?"
+    )
+    assert variants[0].startswith("Нужно ли одобрение")
+    joined = " ".join(variants).lower()
+    assert "одобрен" in joined or "генеральн" in joined
+    # Must not inject demo party names / fixed thresholds.
+    assert "северн" not in joined
+    assert "альфа" not in joined
+    assert "10 000 000" not in joined
+    assert "15 млн" not in joined
+
+
+def test_expand_queries_fail_safe_empty():
+    assert _expand_queries("") == []
+    assert _expand_queries("   ") == []

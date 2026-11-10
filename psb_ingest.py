@@ -132,6 +132,7 @@ def _rows_from_document(name: str, text: str) -> list[dict]:
                 "source_file": name,
                 "kind": meta["kind"],
                 "effective_from": meta["effective_from"],
+                "valid_to": meta.get("valid_to"),
                 "superseded": meta["superseded"],
                 "full_text": text,
             }

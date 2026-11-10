@@ -8,7 +8,10 @@ from pathlib import Path
 from psb_config import CHUNK_CHARS
 
 _CLAUSE_SPLIT = re.compile(r"\n(?=\d+\.\d+(?:\.\d+)?\.)")
+_MAJOR_SPLIT = re.compile(r"\n(?=\d+\.\s+[А-ЯЁA-Z])")
 _CLAUSE_LABEL = re.compile(r"^(\d+\.\d+(?:\.\d+)?)")
+_MAJOR_LABEL = re.compile(r"^(\d+)\.\s+")
+_CLAUSE_START = re.compile(r"(?m)^(\d+\.\d+(?:\.\d+)?)\.\s+")
 _DATE_RE = re.compile(
     r"(?:от\s+)?(\d{1,2})[./](\d{1,2})[./](\d{4})|"
     r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})",
@@ -102,8 +105,16 @@ def extract_quoted_names(text: str) -> list[str]:
     return [m.group(1).strip() for m in _QUOTED.finditer(text or "") if m.group(1).strip()]
 
 
+def _major_num(piece: str) -> str | None:
+    stripped = piece.strip()
+    m = _CLAUSE_LABEL.search(stripped) or _MAJOR_LABEL.search(stripped)
+    if not m:
+        return None
+    return m.group(1).split(".")[0]
+
+
 def chunk_text(text: str, size: int = CHUNK_CHARS) -> list[tuple[str, str]]:
-    """Split into (section_label, chunk) preferring numbered-clause boundaries."""
+    """Split into (section_label, chunk) on numbered clauses; avoid cross-section merges."""
     text = (text or "").strip()
     if not text:
         return []
@@ -114,18 +125,31 @@ def chunk_text(text: str, size: int = CHUNK_CHARS) -> list[tuple[str, str]]:
             label = f"п. {m.group(1)}"
         return [(label, text)]
 
-    pieces = [p.strip() for p in _CLAUSE_SPLIT.split(text) if p.strip()]
+    # First cut on major section headers («3. Арендная плата»), then on N.M clauses.
+    rough = [p.strip() for p in _MAJOR_SPLIT.split(text) if p.strip()]
+    pieces: list[str] = []
+    for block in rough:
+        parts = [p.strip() for p in _CLAUSE_SPLIT.split(block) if p.strip()]
+        pieces.extend(parts or [block])
     if len(pieces) <= 1:
         pieces = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
     parts: list[str] = []
     buf = ""
+    buf_major: str | None = None
     for para in pieces:
-        if buf and len(buf) + len(para) + 1 > size:
+        major = _major_num(para)
+        # Keep each numbered clause atomic when it already fits; never merge across majors.
+        crosses = buf and buf_major and major and major != buf_major
+        too_big = buf and len(buf) + len(para) + 1 > size
+        if crosses or too_big:
             parts.append(buf)
             buf = para
+            buf_major = major
         else:
             buf = f"{buf}\n{para}".strip() if buf else para
+            if buf_major is None:
+                buf_major = major
     if buf:
         parts.append(buf)
 
@@ -147,3 +171,47 @@ def sentence_bounded_excerpt(text: str, limit: int = CHUNK_CHARS) -> str:
         if idx >= limit // 2:
             return piece[: idx + 1].strip()
     return piece.strip()
+
+
+def focused_excerpt(question: str, text: str, limit: int = CHUNK_CHARS) -> str:
+    """Prefer the clause/window inside a unit that best matches the question."""
+    from psb_textnorm import tokens as _tokens
+
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+
+    q_tokens = set(_tokens(question or ""))
+    # Candidate starts: clause markers and paragraph breaks.
+    starts = {0}
+    for m in re.finditer(r"(?:^|\n)(\d+\.\d+(?:\.\d+)?)\.\s", text):
+        starts.add(m.start() if text[m.start()] != "\n" else m.start() + 1)
+    for m in re.finditer(r"\n\s*\n", text):
+        starts.add(m.end())
+
+    best_score = -1.0
+    best = text[:limit]
+    for start in sorted(starts):
+        window = text[start : start + limit]
+        if not window.strip():
+            continue
+        # Trim to sentence end when possible.
+        piece = window
+        for sep in (". ", ".\n", "; ", "\n"):
+            idx = piece.rfind(sep)
+            if idx >= limit // 3:
+                piece = piece[: idx + 1]
+                break
+        overlap = len(q_tokens & set(_tokens(piece))) if q_tokens else 0
+        # Bonus if window opens on a numbered clause mentioned in the question.
+        bonus = 0
+        head = re.match(r"(\d+\.\d+(?:\.\d+)?)", piece.strip())
+        if head and head.group(1) in (question or ""):
+            bonus = 3
+        score = overlap + bonus
+        if score > best_score:
+            best_score = score
+            best = piece.strip()
+    return best or sentence_bounded_excerpt(text, limit)

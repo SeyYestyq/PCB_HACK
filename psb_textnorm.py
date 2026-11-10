@@ -89,6 +89,8 @@ _NOUN = (
     "ом",
     "ем",
 )
+# Short case endings; min_stem=5 so short proper stems are not over-stripped.
+_NOUN_SHORT = ("ии", "ы", "и", "у", "ю", "е", "а", "я")
 _REFLEXIVE = ("ся", "сь")
 _PARTICIPLE = ("ущ", "ющ", "ащ", "ящ", "вш", "нн", "енн")
 
@@ -113,6 +115,7 @@ def stem(word: str) -> str:
     w = _strip_suffix(w, _ADJECTIVE, 4)
     w = _strip_suffix(w, _PARTICIPLE, 4)
     w = _strip_suffix(w, _NOUN, 3)
+    w = _strip_suffix(w, _NOUN_SHORT, 5)
     return w
 
 
