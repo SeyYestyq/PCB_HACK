@@ -33,7 +33,7 @@ description: >-
 ## Пайплайн (обязательный порядок)
 
 1. **BA** — brief + аналоги (study, not copy) → `BA_BRIEF` готов  
-2. **Design** — референсы + фреймы в `design/frames/` → затем `unslop` после UI  
+2. **Design** — характер Vite-чата в `apps/web` → затем `unslop` после UI  
 3. **Scaffold / Backend** — RAG + verify + shared core (и путь к `solution.py`)  
 4. **Frontend** — чат + сайдбар доказательств + состояния отказа  
 5. **QA** — ACCEPTANCE + docker up + демо ≤ 3 мин  

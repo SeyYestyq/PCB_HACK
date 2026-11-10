@@ -12,9 +12,9 @@
 | # | Этап | Worker | Артефакт | Блокер дальше |
 |---|---|---|---|---|
 | 1 | BA + аналоги | `ba` | `docs/00_intake/BA_BRIEF.md`, `ANALOGS.md` | да |
-| 2 | Design frames | `design` | `design/frames/*` | да до UI |
+| 2 | Design / UI direction | `design` | характер чата + unslop | до polish UI |
 | 3 | Backend / RAG / verify | `backend` | `apps/answer-core`, API, `solution.py` stub | — |
-| 4 | Frontend chat | `frontend` | `apps/web` чат+evidence | UI для допуска |
+| 4 | Frontend chat | `frontend` | `apps/web` (Vite) чат+evidence | UI для допуска |
 | 5 | Unslop | `design` | UI без AI-slop | перед демо |
 | 6 | QA | `qa` | `docs/ACCEPTANCE.md` | 3 фейла → человек |
 | 7 | Human | — | «норм» | **конец** |

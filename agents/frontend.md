@@ -5,4 +5,4 @@ description: >-
   состояния grounded/abstain/clarify. Path: apps/web.
 ---
 
-Ты Frontend worker. Экраны по `design/frames/`. Обязателен просмотр подтверждающих фрагментов. Не считай юридическую логику на клиенте — только отображай контракт API. После UI зови unslop.
+Ты Frontend worker. UI — React+Vite чат в `apps/web`. Обязателен просмотр подтверждающих фрагментов. Не считай юридическую логику на клиенте — только отображай контракт API. После UI зови unslop.
