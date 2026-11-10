@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import math
+import urllib.error
+import urllib.request
 from collections import Counter
 
 from psb_catalog import match_catalog
+from psb_config import env, env_int, llm_settings
 from psb_textnorm import normalize, tokens
 from psb_vectors import search as vector_search
 from psb_vectors import unit_key
@@ -65,12 +69,14 @@ def _topic_boost(question: str, row: dict) -> float:
         (("правоспособ", "кредит", "досье", "полномоч"), 5.0),
         (("персональн", "152"), 3.0),
         (("согласован", "регламент"), 3.0),
-        (("одобрен", "генеральн", "регламент", "миллион"), 8.0),
         (("юротдел", "оригинал", "регламент", "переда"), 5.0),
         (("поставк", "альфа"), 2.0),
         (("гарант", "альфа", "талон"), 4.0),
         (("упаковк", "доставк", "цен"), 4.0),
         (("акт", "ключ", "возврат", "помещен"), 4.0),
+        (("претенз", "недостат", "дефект", "акт"), 8.0),
+        (("химк", "склад", "пропуск", "доступ", "транспорт"), 6.0),
+        (("упаковк", "доставк", "цен", "включ"), 6.0),
         (("пособи", "беременност"), -8.0),  # not in KB — demote false friends
     )
     for keys, weight in pairs:
@@ -84,13 +90,35 @@ def _topic_boost(question: str, row: dict) -> float:
         if "нк" in blob and "284" in blob:
             boost -= 6.0
     # GD approval / thresholds live in the company regulation, not in contracts.
-    if any(k in q for k in ("одобрен", "генеральн")) and any(
-        k in q for k in ("млн", "миллион", "сумм", "август", "2024", "2025")
+    # Do not boost contract preambles that merely mention «генеральный директор».
+    if any(k in q for k in ("одобрен", "порог")) or (
+        "генеральн" in q and any(k in q for k in ("млн", "миллион", "сумм", "одобрен"))
     ):
+        text = row.get("text") or ""
         if "регламент" in blob:
-            boost += 10.0
+            boost += 14.0
+            if "10 000 000" in text or "десяти миллион" in blob:
+                boost += 10.0
+            if "15 000 000" in text or "пятнадцат" in blob:
+                boost += 4.0
+            if "утратила силу" in blob or "утратил силу" in blob:
+                boost -= 14.0
         elif "договор" in blob and "регламент" not in blob:
-            boost -= 6.0
+            boost -= 10.0
+    # Prepayment / settlement clauses for advance-payment questions.
+    if any(k in q for k in ("аванс", "предоплат", "оплат")):
+        if any(k in blob for k in ("предоплат", "порядк расчёт", "4.1", "4.2")):
+            boost += 12.0
+        if "ответственност" in blob and "гарант" in blob:
+            boost -= 4.0
+    # Claim attachments: prefer acceptance/defect clause over dispute §8.
+    if any(k in q for k in ("претенз", "дефект", "недостатк", "прилож")):
+        if any(k in blob for k in ("акт о выявлен", "акт о недостат", "выявленных недостат")):
+            boost += 12.0
+        if "8.1" in blob and "арбитраж" in blob:
+            boost -= 8.0
+    if "утратила силу" in blob or "редакция утратила" in blob:
+        boost -= 8.0
     return boost
 
 
@@ -192,22 +220,91 @@ def retrieve(
 
 def _fuse(question: str, kb: list[dict], lexical: list[dict], k: int) -> list[dict]:
     """Reciprocal rank fusion of BM25 and pgvector/in-memory cosine."""
-    if not vectors_enabled():
-        return lexical
+    fused = lexical
+    if vectors_enabled():
+        try:
+            dense = vector_search(question, kb, k=max(k, 8))
+        except Exception:
+            dense = []
+        if dense and lexical:
+            scores: dict[str, float] = {}
+            rows: dict[str, dict] = {}
+            for group in (lexical, dense):
+                for rank, row in enumerate(group):
+                    key = unit_key(row)
+                    rows[key] = row
+                    scores[key] = scores.get(key, 0.0) + 1.0 / (60.0 + rank + 1.0)
+            ordered = sorted(scores, key=lambda item: scores[item], reverse=True)
+            fused = [rows[key] for key in ordered[: max(k, 8)]]
+        elif dense:
+            fused = dense[: max(k, 8)]
+    return _optional_rerank(question, fused, k)
+
+
+def _optional_rerank(question: str, rows: list[dict], k: int) -> list[dict]:
+    """POST {LLM_BASE_URL}/rerank when RERANKER_MODEL is set; fail-open to RRF order."""
+    model = env("RERANKER_MODEL")
+    if not model or not rows:
+        return rows[:k]
+    base, llm_key, _ = llm_settings()
+    if not base:
+        return rows[:k]
+    key = env("RERANKER_API_KEY") or llm_key
+    if not key:
+        return rows[:k]
+    top_n = env_int("RERANKER_TOP_N", min(k, len(rows)), 1, max(1, len(rows)))
+    docs = []
+    for row in rows:
+        title = row.get("title") or row.get("doc_id") or ""
+        text = (row.get("text") or "")[:700]
+        docs.append(f"{title}\n{text}")
+    payload = {
+        "model": model,
+        "query": question,
+        "documents": docs,
+        "top_n": min(top_n, len(docs)),
+    }
+    url = f"{base.rstrip('/')}/rerank"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
     try:
-        dense = vector_search(question, kb, k=max(k, 8))
-    except Exception:
-        return lexical
-    if not dense:
-        return lexical
-    if not lexical:
-        return dense[:k]
-    scores: dict[str, float] = {}
-    rows: dict[str, dict] = {}
-    for group in (lexical, dense):
-        for rank, row in enumerate(group):
-            key = unit_key(row)
-            rows[key] = row
-            scores[key] = scores.get(key, 0.0) + 1.0 / (60.0 + rank + 1.0)
-    ordered = sorted(scores, key=lambda item: scores[item], reverse=True)
-    return [rows[key] for key in ordered[:k]]
+        with urllib.request.urlopen(req, timeout=env_int("RERANK_TIMEOUT_SEC", 4, 1, 30)) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        items = body.get("results") or body.get("data") or []
+        indices: list[int] = []
+        for item in items:
+            if isinstance(item, dict) and "index" in item:
+                indices.append(int(item["index"]))
+            elif isinstance(item, int):
+                indices.append(item)
+        ordered = [rows[i] for i in indices if 0 <= i < len(rows)]
+        if ordered:
+            # Append any RRF leftovers not returned by the reranker.
+            seen = {unit_key(r) for r in ordered}
+            for row in rows:
+                key_u = unit_key(row)
+                if key_u not in seen:
+                    ordered.append(row)
+                    seen.add(key_u)
+            return ordered[:k]
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        TimeoutError,
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        pass
+    return rows[:k]

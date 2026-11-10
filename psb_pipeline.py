@@ -24,7 +24,7 @@ from psb_editions import extract_event_date, filter_kb_by_edition, needs_histori
 from psb_ingest import default_kb_path, load_kb
 from psb_retrieve import retrieve
 from psb_structure import sentence_bounded_excerpt
-from psb_textnorm import normalize
+from psb_textnorm import normalize, strip_markdown
 
 # Re-export for callers / tests
 __all__ = [
@@ -55,6 +55,9 @@ class Answer:
     citations: list[Citation] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     options: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.answer = strip_markdown(self.answer or "")
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -243,9 +246,9 @@ def _scope_to_contract(kb: list[dict], cards: list) -> list[dict]:
     return scoped or kb
 
 
-def _status_from_text(text: str) -> str:
+def _llm_abstain_leadin(text: str) -> bool:
     folded = normalize(text)
-    if any(
+    return any(
         phrase in folded
         for phrase in (
             "нет положений для ответа",
@@ -256,8 +259,22 @@ def _status_from_text(text: str) -> str:
             "в базе знаний нет",
             "не найдено подтверждающих",
         )
-    ):
-        return "abstain"
+    )
+
+
+def _status_from_text(text: str, *, citations_verified: bool = False) -> str:
+    folded = normalize(text)
+    if _llm_abstain_leadin(text):
+        if citations_verified and (
+            re.search(r"\d", text)
+            or "п." in folded
+            or "пункт" in folded
+            or "источник" in folded
+        ):
+            # LLM hedged with «нет положений», but cited concrete fragments — keep answer.
+            pass
+        else:
+            return "abstain"
     if any(
         phrase in folded
         for phrase in (
@@ -306,6 +323,7 @@ def _call_llm(question: str, citations: list[Citation], history: list[Turn] | No
     system = (
         "Ты юридический ассистент банка. Отвечай только по приложенным фрагментам. "
         "Не используй внешние знания и не выдумывай нормы, числа и пункты. "
+        "Пиши обычным текстом без Markdown: без **, *, #, списков с дефисом и блоков кода. "
         "Каждое юридически значимое утверждение сопроводи названием документа и пунктом; "
         "срок, сумму и порог процитируй дословно. "
         "Если пользователь назвал сумму, срок или факт, которого нет во фрагментах, поправь его. "
@@ -348,7 +366,7 @@ def _call_llm(question: str, citations: list[Citation], history: list[Turn] | No
             body = json.loads(resp.read().decode("utf-8"))
         content = body["choices"][0]["message"].get("content", "")
         if isinstance(content, str) and content.strip():
-            return " ".join(content.split())
+            return strip_markdown(content)
     except (
         urllib.error.URLError,
         urllib.error.HTTPError,
@@ -487,7 +505,7 @@ def answer_question(
         if "текущую дату" not in normalize(text):
             text += " Вывод относится к действующей редакции на текущую дату."
 
-    status = _status_from_text(text)
+    status = _status_from_text(text, citations_verified=_citations_verified(text, citations))
     if status == "abstain":
         return Answer(
             "abstain",

@@ -56,9 +56,13 @@ cd apps/web && npm install && npm run dev
 
 ## Сабмит на платформу (`solution.py`)
 
-В ZIP — корневые `solution.py`, `psb_*.py`, `requirements.txt` (без базы и вопросов).
+В ZIP — только корневые `solution.py`, `psb_*.py`, `requirements.txt` (без `.env`, KB, `vendor/`, `node_modules/`, Docker/UI). Лимит платформы: **≤ 128 MB**.
 
 ```bash
+# Собрать ZIP локально (не загружает на платформу)
+./scripts/pack_submission_zip.sh
+# → dist/psb_submission.zip
+
 # Как на платформе: без аргументов → submission.csv
 DATA_DIR=data/organizer/tests PSB_KB_PATH=data/organizer/kb python3 solution.py
 
@@ -66,7 +70,11 @@ DATA_DIR=data/organizer/tests PSB_KB_PATH=data/organizer/kb python3 solution.py
 python3 solution.py "Какая арендная плата по договору с ООО «Северный Склад»?"
 ```
 
-Платформа передаёт `DATA_DIR/questions.csv` и `DATA_DIR/knowledge-base.zip`. Скрипт пишет `submission.csv` (`id,answer`), изолирует сбой одного вопроса, пишет через временный файл.
+Платформа передаёт `DATA_DIR/questions.csv` и `DATA_DIR/knowledge-base.zip`. Скрипт пишет `submission.csv` (`id,answer`), параллелит через `MAX_WORKERS`, изолирует сбой одного вопроса, пишет через временный файл.
+
+Опционально: `RERANKER_MODEL` → `POST {LLM_BASE_URL}/rerank` (fail-open на порядок RRF). Не хардкодить Cohere — брать модель из env платформы.
+
+Подробнее: [`docs/SUBMIT_ZIP.md`](docs/SUBMIT_ZIP.md).
 
 ## Структура
 

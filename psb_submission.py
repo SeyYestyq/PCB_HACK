@@ -6,11 +6,13 @@ import csv
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from psb_config import FALLBACK_ANSWER, MAX_ANSWER_CHARS, data_dir
+from psb_config import FALLBACK_ANSWER, MAX_ANSWER_CHARS, data_dir, env_int
 from psb_ingest import load_kb, resolve_platform_kb
 from psb_pipeline import answer_question
+from psb_textnorm import strip_markdown
 
 
 def find_questions(data: Path) -> Path:
@@ -44,7 +46,8 @@ def load_questions(path: Path) -> list[tuple[str, str]]:
 
 
 def _clip_answer(text: str) -> str:
-    cleaned = " ".join((text or FALLBACK_ANSWER).split())
+    cleaned = strip_markdown(text or FALLBACK_ANSWER)
+    cleaned = " ".join(cleaned.split())
     if not cleaned:
         cleaned = FALLBACK_ANSWER
     if len(cleaned) > MAX_ANSWER_CHARS:
@@ -59,6 +62,7 @@ def run_batch(
 ) -> int:
     data = data_path or data_dir()
     out = out_path or Path("submission.csv")
+    workers = env_int("MAX_WORKERS", 2, 1, 8)
 
     # Preflight BEFORE touching submission.csv (D22 / RG-SUB-09)
     try:
@@ -72,14 +76,28 @@ def run_batch(
         print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise
 
-    answers: list[tuple[str, str]] = []
-    for qid, question in questions:
+    def work(qid: str, question: str) -> tuple[str, str]:
         try:
             result = answer_question(question, kb, kb_rows=kb_rows)
-            answers.append((qid, _clip_answer(result.answer)))
+            return qid, _clip_answer(result.answer)
         except Exception as exc:
             print(f"question {qid} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-            answers.append((qid, FALLBACK_ANSWER))
+            return qid, FALLBACK_ANSWER
+
+    answers: list[tuple[str, str]] = [("", "")] * len(questions)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(work, qid, question): idx
+            for idx, (qid, question) in enumerate(questions)
+        }
+        done = 0
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            qid, answer = fut.result()
+            answers[idx] = (qid, answer)
+            done += 1
+            if done % 10 == 0 or done == len(questions):
+                print(f"Processed {done}/{len(questions)}", flush=True)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -102,5 +120,5 @@ def run_batch(
             pass
         raise
 
-    print(f"Wrote {out} ({len(answers)} answers); KB={kb}", flush=True)
+    print(f"Wrote {out} ({len(answers)} answers); KB={kb}; workers={workers}", flush=True)
     return 0

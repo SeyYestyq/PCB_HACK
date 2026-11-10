@@ -5,6 +5,25 @@ from __future__ import annotations
 import re
 
 _WORD_RE = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
+_MD_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+_MD_ITALIC = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
+_MD_CODE = re.compile(r"`([^`]+)`")
+_MD_HEADING = re.compile(r"(?m)^#{1,6}\s+")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_BULLET = re.compile(r"(?m)^\s*[-*+]\s+")
+
+
+def strip_markdown(text: str) -> str:
+    """Remove common Markdown markers for UI / judge-facing plain text."""
+    raw = text or ""
+    raw = _MD_LINK.sub(r"\1", raw)
+    raw = _MD_BOLD.sub(r"\1", raw)
+    raw = _MD_ITALIC.sub(r"\1", raw)
+    raw = _MD_CODE.sub(r"\1", raw)
+    raw = _MD_HEADING.sub("", raw)
+    raw = _MD_BULLET.sub("", raw)
+    raw = raw.replace("**", "").replace("__", "")
+    return " ".join(raw.split())
 _PERFECTIVE = (
     "ившись",
     "ывшись",

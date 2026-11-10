@@ -146,6 +146,56 @@ def _name_in_question(name: str, question_norm: str) -> bool:
     return re.search(rf"(?<![\w]){re.escape(name_n)}(?![\w])", question_norm) is not None
 
 
+def _name_tokens_align(lhs: str, rhs: str) -> bool:
+    """Inflected quoted party («Северным Складом») vs catalog name."""
+    left = sorted(tokens(lhs), key=len)
+    right = sorted(tokens(rhs), key=len)
+    if not left or not right or len(left) != len(right):
+        return False
+    for a, b in zip(left, right):
+        if a == b:
+            continue
+        # Prefix allowance for inflection only (склад/складом), not трейд/трейдинг.
+        if (
+            len(a) >= 5
+            and len(b) >= 5
+            and a[:5] == b[:5]
+            and abs(len(a) - len(b)) <= 2
+        ):
+            continue
+        return False
+    return True
+
+
+def _prefer_specific_name_hits(
+    hits: list[CounterpartyCard], question: str
+) -> list[CounterpartyCard]:
+    """If the question names a longer party («Альфа-Трейдинг»), drop prefix siblings."""
+    if len(hits) <= 1:
+        return hits
+    q = normalize(question or "")
+    kept: list[CounterpartyCard] = []
+    for card in hits:
+        name = normalize(card.name)
+        dominated = False
+        for other in hits:
+            if other is card:
+                continue
+            other_name = normalize(other.name)
+            if len(other_name) <= len(name):
+                continue
+            if name and other_name.startswith(name) and _name_in_question(other.name, q):
+                dominated = True
+                break
+            # Quoted longer form in the question wins over a shorter catalog sibling.
+            if name and other_name.startswith(name) and other_name in q.replace("«", "").replace("»", ""):
+                dominated = True
+                break
+        if not dominated:
+            kept.append(card)
+    return kept or hits
+
+
 def match_catalog(question: str, catalog: list[CounterpartyCard]) -> list[CounterpartyCard]:
     q = normalize(question or "")
     q_tokens = set(tokens(question or ""))
@@ -175,8 +225,13 @@ def match_catalog(question: str, catalog: list[CounterpartyCard]) -> list[Counte
             continue
         if _name_in_question(card.name, q):
             hits.append(card)
+            continue
+        for quoted in extract_quoted_names(question):
+            if _name_tokens_align(quoted, card.name):
+                hits.append(card)
+                break
 
-    return _prefer_counterparties(hits)
+    return _prefer_counterparties(_prefer_specific_name_hits(hits, question))
 
 
 def needs_clarify_contract(question: str, catalog: list[CounterpartyCard]) -> tuple[bool, list[str]]:

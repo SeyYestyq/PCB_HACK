@@ -35,12 +35,32 @@ _MONTH_STEMS = (
 )
 
 
+_CONTRACT_YEAR_RE = re.compile(
+    r"(?:№|#)?\s*(?:[А-ЯA-Zа-яa-z]{1,4}[-–—/]?\d{1,4}/)(20\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_contract_years(text: str) -> str:
+    """Contract numbers like А-08/2024 are labels, not event dates."""
+    scrubbed = _CONTRACT_YEAR_RE.sub(" ", text or "")
+    # Bare suffix after contract prefix without №
+    scrubbed = re.sub(
+        r"(?<![\w])(?:А|A|П|P|ПТ|PT)[-–—]?\d{1,3}/(20\d{2})(?!\w)",
+        " ",
+        scrubbed,
+        flags=re.IGNORECASE,
+    )
+    return scrubbed
+
+
 def extract_event_date(question: str) -> int | None:
     """Return YYYYMMDD int if the question binds an event date."""
-    dates = parse_date_parts(question or "")
+    scrubbed = _strip_contract_years(question or "")
+    dates = parse_date_parts(scrubbed)
     if dates:
         return date_to_int(dates[-1])
-    q = normalize(question or "")
+    q = normalize(scrubbed)
     # «в августе 2024» has a month and a year, but no day number.
     for stem, month in _MONTH_STEMS:
         found = re.search(rf"{stem}\w*\s+(20\d{{2}})", q)
@@ -48,7 +68,7 @@ def extract_event_date(question: str) -> int | None:
             if stem == "ма" and not re.match(r"ма[йяе]", q[found.start() :]):
                 continue
             return int(found.group(1)) * 10_000 + month * 100 + 15
-    years = re.findall(r"\b(20\d{2})\b", question or "")
+    years = re.findall(r"\b(20\d{2})\b", scrubbed)
     if years:
         return int(years[-1]) * 10_000 + 101
     return None
