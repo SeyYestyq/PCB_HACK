@@ -1,0 +1,85 @@
+@font-face{font-family:'Golos Text';src:url("file:///usr/share/fonts/truetype/sand-box/google/Golos Text/GolosText-VariableFont_wght.ttf");}
+@font-face{font-family:'PT Serif';src:url("file:///usr/share/fonts/truetype/sand-box/google/PT Serif/PTSerif-Regular.ttf");font-weight:400;font-style:normal}
+@font-face{font-family:'PT Serif';src:url("file:///usr/share/fonts/truetype/sand-box/google/PT Serif/PTSerif-Bold.ttf");font-weight:700;font-style:normal}
+@font-face{font-family:'PT Serif';src:url("file:///usr/share/fonts/truetype/sand-box/google/PT Serif/PTSerif-Italic.ttf");font-weight:400;font-style:italic}
+:root{--blue:#2B2C84;--orange:#EA5614;--ink:#3E3E59;--ink2:#5C5C73;--ink3:#646872;--line:#E6E6EF;--lines:#C7C7D9;--canvas:#F8F8FC;--s2:#F0F0F7;--tint:#EDEDF7;--evid:#E4E4F3}
+@page{size:A4;margin:22mm 18mm 20mm 18mm;
+  @bottom-left{content:"Юридический ассистент ПСБ · Брендбук и UI-спецификация";font:400 7.5pt 'Golos Text';color:#646872}
+  @bottom-right{content:counter(page) " / " counter(pages);font:500 7.5pt 'Golos Text';color:#646872;font-variant-numeric:tabular-nums}
+  @top-right{content:string(chap);font:500 7.5pt 'Golos Text';color:#646872}
+  @top-left{content:"Hack&Change 2026 × ПСБ";font:400 7.5pt 'Golos Text';color:#646872}}
+@page cover{margin:0;@bottom-left{content:none}@bottom-right{content:none}@top-right{content:none}@top-left{content:none}}
+@page :blank{@top-right{content:none}}
+html{font-family:'Golos Text',Verdana,sans-serif;color:var(--ink);font-size:9.6pt;line-height:1.55}
+body{margin:0}
+b,strong{font-weight:600}
+.cover{page:cover;height:297mm;position:relative;background:#F8F8FC;break-after:page}
+.cover .band{position:absolute;left:0;top:0;bottom:0;width:6mm;background:var(--blue)}
+.cover .mark{position:absolute;left:6mm;top:0;bottom:0;width:1.2mm;background:var(--orange)}
+.cover .inner{position:absolute;left:28mm;right:22mm;top:30mm}
+.cover .logo{background:#F0F0F5;display:inline-block;padding:6mm 7mm}
+.cover .logo img{height:13mm;display:block}
+.cover .ctitle{font-size:30pt;line-height:1.15;font-weight:600;margin:28mm 0 6mm;color:var(--ink);string-set:none}
+.cover .sub{font-size:13pt;line-height:1.45;color:var(--ink2);max-width:140mm}
+.cover .meta{position:absolute;left:28mm;right:22mm;bottom:24mm;font-size:8.5pt;color:var(--ink3);border-top:1px solid var(--lines);padding-top:4mm;display:flex;gap:12mm}
+.cover .meta b{display:block;color:var(--ink);font-weight:600}
+.cover .quote{margin-top:16mm;border-left:2px solid var(--blue);padding-left:5mm;font-family:'PT Serif';font-size:12pt;line-height:1.6;max-width:130mm}
+h1{font-size:20pt;line-height:1.25;font-weight:600;margin:0 0 4mm;break-before:page}
+h1 .t{string-set:chap content(text)}
+h1 .n{display:block;font-size:9pt;color:var(--blue);font-weight:600;letter-spacing:.02em;margin-bottom:3mm}
+h1 .n::before{content:"";display:inline-block;width:8mm;height:1.2mm;background:var(--orange);margin-right:3mm;vertical-align:middle}
+h2{font-size:12.5pt;line-height:1.35;font-weight:600;margin:7mm 0 2.5mm;break-after:avoid}
+h3{font-size:10.5pt;font-weight:600;margin:5mm 0 2mm;break-after:avoid}
+p{margin:0 0 2.6mm}
+.lead{font-size:11pt;line-height:1.55;color:var(--ink);max-width:150mm;margin-bottom:5mm}
+.why{border-left:2px solid var(--blue);background:var(--tint);padding:2.5mm 4mm;margin:3mm 0 4mm;break-inside:avoid}
+.why::before{content:"Почему";display:block;font-weight:600;font-size:8pt;color:var(--blue);letter-spacing:.02em;margin-bottom:1mm}
+.note{color:var(--ink2);font-size:8.5pt}
+.src{font-size:7.8pt;color:var(--ink3);margin-top:1.5mm}
+table{width:100%;border-collapse:collapse;font-size:8.2pt;line-height:1.42;margin:2mm 0 4mm}
+th{text-align:left;font-weight:600;color:var(--ink2);border-bottom:1px solid var(--lines);padding:1.6mm 2mm 1.6mm 0;vertical-align:bottom}
+td{border-bottom:1px solid var(--line);padding:1.6mm 2mm 1.6mm 0;vertical-align:top}
+tr{break-inside:avoid}
+code,.mono{font-family:ui-monospace,'DejaVu Sans Mono',monospace;font-size:.86em;color:var(--ink)}
+.num{font-variant-numeric:tabular-nums}
+.toc{list-style:none;padding:0;margin:4mm 0;columns:1}
+.toc li{display:flex;border-bottom:1px solid var(--line);padding:1.6mm 0;font-size:10pt}
+.toc a{color:var(--ink);text-decoration:none;flex:1}
+.toc a::after{content:target-counter(attr(href),page);float:right;color:var(--ink3);font-variant-numeric:tabular-nums}
+.toc .n{color:var(--blue);font-weight:600;width:11mm;display:inline-block}
+.grid2{display:flex;gap:6mm}.grid2>div{flex:1}
+.sw{display:flex;flex-wrap:wrap;gap:4mm;margin:3mm 0}
+.sw .c{width:52mm;break-inside:avoid;border:1px solid var(--line)}
+.sw .chip{height:20mm;display:flex;align-items:flex-end;padding:2mm 3mm;font-weight:600;font-size:9pt}
+.sw .d{padding:2mm 3mm;font-size:7.8pt;line-height:1.4}
+.sw .d b{font-size:8.5pt}
+figure{margin:3mm 0 5mm;break-inside:avoid}
+figcaption{font-size:8pt;color:var(--ink2);margin-top:1.5mm}
+img.full{width:100%;display:block}
+.frames{display:flex;gap:3mm}.frames img{width:100%;display:block;border:1px solid var(--line)}
+.frames div{flex:1;font-size:7.4pt;color:var(--ink2)}
+.badge{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:4px;font-weight:500;font-size:14px;line-height:20px;white-space:nowrap}
+.btn{display:inline-block;height:44px;line-height:44px;padding:0 16px;border-radius:4px;font-weight:500;font-size:15px;letter-spacing:.005em;margin-right:8px}
+.btn.m{height:32px;line-height:32px;padding:0 12px;font-size:14px}
+.chipc{display:inline-block;min-width:24px;height:24px;line-height:24px;text-align:center;border-radius:4px;background:var(--tint);color:var(--blue);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums;padding:0 6px;box-sizing:border-box}
+.specimen{border-top:1px solid var(--line);padding:2.5mm 0;display:flex;gap:5mm;align-items:baseline;break-inside:avoid}
+.specimen .k{width:42mm;flex:none;font-size:7.8pt;color:var(--ink2);line-height:1.35}
+.specimen .k b{color:var(--ink);font-size:8.4pt}
+.demo{border:1px solid var(--line);background:#fff;padding:5mm;margin:3mm 0;break-inside:avoid}
+.ans .meta{font-size:13px;color:var(--ink2);font-weight:500;height:32px;line-height:32px}
+.ans .head{font-size:17px;line-height:24px;font-weight:600;margin:16px 0 8px}
+.ans .body{font-size:16px;line-height:26px;margin:0 0 12px}
+.ans .lbl{font-size:14px;line-height:20px;font-weight:500;color:var(--ink2);margin:24px 0 8px}
+.ans .row{border:1px solid var(--line);border-radius:4px;padding:8px 12px;margin-bottom:4px}
+.ans .row .t{font-size:14px;line-height:20px;font-weight:500}
+.ans .row .m{font-size:13px;line-height:18px;color:var(--ink2)}
+.quote{font-family:'PT Serif';font-size:15px;line-height:24px;border-left:2px solid var(--blue);padding-left:12px}
+.bn{border-radius:8px;padding:16px 20px 16px 16px;border-left:4px solid;margin:3mm 0;break-inside:avoid}
+.bn .h{font-size:17px;line-height:24px;font-weight:600}
+.bn .b{font-size:14px;line-height:20px;margin-top:4px}
+.check td:first-child{width:6mm;color:var(--blue);font-weight:600}
+.small{font-size:7.8pt}
+.pb{break-before:page}
+a{color:var(--blue)}
+
+code, .token { white-space: nowrap; }

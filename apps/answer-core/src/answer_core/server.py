@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .pipeline import answer_question, default_kb_path
+from .pipeline import answer_question, default_kb_path, load_kb
 
-app = FastAPI(title="PSB Legal Answer Core", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Build the pgvector/in-memory dense index once, before the first question."""
+    try:
+        from psb_vectors import ensure_index, vectors_enabled
+
+        if vectors_enabled():
+            ensure_index(load_kb(default_kb_path()))
+    except Exception as exc:
+        print(f"dense index skipped: {type(exc).__name__}")
+    yield
+
+
+app = FastAPI(title="PSB Legal Answer Core", version="0.2.0", lifespan=_lifespan)
 
 origins = [
     o.strip()
@@ -25,9 +40,14 @@ app.add_middleware(
 )
 
 
+class HistoryTurn(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=1)
-    history: list[dict] = Field(default_factory=list)
+    question: str = Field(..., min_length=1, max_length=4000)
+    history: list[HistoryTurn] = Field(default_factory=list)
 
 
 class CitationOut(BaseModel):
@@ -42,22 +62,34 @@ class AskResponse(BaseModel):
     answer: str
     citations: list[CitationOut]
     missing: list[str]
+    options: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "service": "psb-answer-core"}
+    vectors: dict[str, Any] = {"enabled": False}
+    try:
+        from psb_vectors import status
+
+        vectors = status()
+    except Exception as exc:
+        vectors = {"enabled": False, "error": type(exc).__name__}
+    return {"ok": True, "service": "psb-answer-core", "vectors": vectors}
 
 
 @app.post("/api/v1/ask", response_model=AskResponse)
 def ask(body: AskRequest) -> AskResponse:
     kb = default_kb_path()
-    result = answer_question(body.question, kb)
+    history: list[dict[str, Any]] = [
+        {"role": t.role, "content": t.content} for t in body.history[-10:]
+    ]
+    result = answer_question(body.question, kb, history=history)
     return AskResponse(
         status=result.status,
         answer=result.answer,
         citations=[CitationOut(**c.__dict__) for c in result.citations],
         missing=result.missing,
+        options=list(getattr(result, "options", []) or []),
     )
 
 

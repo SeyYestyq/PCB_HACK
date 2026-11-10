@@ -1,0 +1,91 @@
+# Explicit name: Cyrillic folder «ПСБ» yields empty default project name.
+name: psb
+
+services:
+  answer:
+    build:
+      context: .
+      dockerfile: apps/answer-core/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      # Absolute path inside the container (do not inherit relative host .env path).
+      PSB_KB_PATH: /data/organizer/kb
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      EMB_MODEL: ${EMB_MODEL:-baai/bge-m3}
+      PSB_VECTORS: "1"
+      DATABASE_URL: postgresql://copilot:copilot@postgres:5432/copilot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data/organizer:/data/organizer:ro
+      - ./psb_config.py:/app/psb_config.py:ro
+      - ./psb_textnorm.py:/app/psb_textnorm.py:ro
+      - ./psb_structure.py:/app/psb_structure.py:ro
+      - ./psb_ingest.py:/app/psb_ingest.py:ro
+      - ./psb_catalog.py:/app/psb_catalog.py:ro
+      - ./psb_editions.py:/app/psb_editions.py:ro
+      - ./psb_retrieve.py:/app/psb_retrieve.py:ro
+      - ./psb_pipeline.py:/app/psb_pipeline.py:ro
+      - ./psb_vectors.py:/app/psb_vectors.py:ro
+      - ./psb_submission.py:/app/psb_submission.py:ro
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - answer
+    restart: unless-stopped
+
+  # Legacy stub API (optional profile)
+  api:
+    profiles: ["legacy"]
+    build: ./apps/api
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_ADDR: ":8080"
+      DEMO_TOKEN: ${DEMO_TOKEN:-demo-masha-token}
+      DEMO_OFFLINE: ${DEMO_OFFLINE:-1}
+      USE_MEMORY_STORE: "1"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: copilot
+      POSTGRES_PASSWORD: copilot
+      POSTGRES_DB: copilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/001_vector.sql:/docker-entrypoint-initdb.d/001_vector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copilot -d copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    profiles: ["full"]
+
+volumes:
+  uploads:
+  pgdata:

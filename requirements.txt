@@ -1,0 +1,2 @@
+# Platform ZIP submit — stdlib-only runtime for solution.py / psb_*.py.
+# FastAPI stack lives in apps/answer-core/requirements.txt for the web prototype.

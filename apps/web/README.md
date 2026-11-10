@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Веб-чат юриста
 
-## Getting Started
+Vite, React и TypeScript. На экране один чат: вопрос по базе знаний, ответ и фрагменты документов. Клиент не выводит нормы сам и только показывает поля ответа API.
 
-First, run the development server:
+Браузер всегда отправляет `POST /api/v1/ask` на тот же адрес, с которого открыт чат.
+
+## Локально
+
+Сначала поднимите API на `http://127.0.0.1:8090`.
 
 ```bash
+cd apps/web
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Чат: http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Vite проксирует `/api` на `http://127.0.0.1:8090`. Отдельный URL API через переменные окружения не задаётся.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm run preview
+```
 
-## Learn More
+`build` проверяет типы и кладёт статику в `dist/`. `preview` отдаёт её на порту 3000 и проксирует `/api` туда же.
 
-To learn more about Next.js, take a look at the following resources:
+## Docker
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Образ собирает фронт на `node:22-alpine`, затем `nginx:alpine` раздаёт `dist` на порту 3000. Запросы `/api/` nginx отправляет на `http://answer:8090/api/`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Из корня репозитория:
 
-## Deploy on Vercel
+```bash
+docker compose build web
+docker compose up web
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+У сервиса `web` в `compose.yaml` нет аргументов сборки и нет `NEXT_PUBLIC_*` / `API_UPSTREAM`. Проброс порта: `3000:3000`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Скрипты
+
+| Скрипт | Команда |
+|---|---|
+| `dev` | `vite --port 3000` |
+| `build` | `tsc --noEmit && vite build` |
+| `preview` | `vite preview --port 3000` |
+| `test:e2e` | Playwright, `e2e/legal.spec.ts` |
+
+## Файлы
+
+- `src/components/LegalChat.tsx` — лента, поле вопроса, панель подтверждений
+- `src/lib/legal-api.ts` — запрос `POST /api/v1/ask`
+- `src/lib/brand.ts` — название и короткая оговорка
+- `src/index.css` — стили чата, IBM Plex Sans и Source Serif 4

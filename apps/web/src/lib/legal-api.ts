@@ -1,8 +1,3 @@
-const API_URL = (process.env.NEXT_PUBLIC_LEGAL_API_URL || "http://localhost:8090").replace(
-  /\/$/,
-  "",
-);
-
 export type LegalCitation = {
   doc_id: string;
   title: string;
@@ -15,13 +10,25 @@ export type LegalAskResponse = {
   answer: string;
   citations: LegalCitation[];
   missing: string[];
+  options?: string[];
 };
 
-export async function askLegal(question: string): Promise<LegalAskResponse> {
-  const res = await fetch(`${API_URL}/api/v1/ask`, {
+export type LegalHistoryTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export async function askLegal(
+  question: string,
+  history: LegalHistoryTurn[] = [],
+): Promise<LegalAskResponse> {
+  const res = await fetch("/api/v1/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({
+      question,
+      history: history.slice(-10),
+    }),
     cache: "no-store",
   });
   if (!res.ok) {
