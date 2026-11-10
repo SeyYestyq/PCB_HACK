@@ -13,7 +13,7 @@
 | T19 | Dense vectors+RRF smoke `PSB_VECTORS=1` | orchestrator | Docker ask :8090/:3000 | **done** |
 | T20 | Generality: `PSB_KB_PATH`, no counterparty topic_boost | orchestrator | grep/AC | **done** |
 | T21 | Golden lexical pytest + `reports/rag_hillclimb.md` | orchestrator | 49 passed | **done** |
-| T22 | Commit + push `origin/main` | orchestrator | no .env/secrets/force | **doing** |
+| T22 | Commit + push `origin/main` | orchestrator | `4f63279` pushed | **done** |
 
 ## Done (prior)
 
