@@ -3,13 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Юридический ассистент</title>
+    <title>Юридический ассистент · ПСБ</title>
     <meta
       name="description"
-      content="Ответы только по базе знаний, со ссылками на положения"
+      content="Ответы по базе знаний банка со ссылками на пункты документов и обоснованный отказ, если положения нет"
     />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="preload" href="/fonts/manrope-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/source-serif-4-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      // тема до первой отрисовки, чтобы не мигало
+      (function () {
+        try {
+          var saved = window.localStorage.getItem("psb-theme");
+          var system = window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+          document.documentElement.dataset.theme = saved || system;
+        } catch (error) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

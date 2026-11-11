@@ -33,7 +33,12 @@ export async function askLegal(
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(body.slice(0, 200) || `HTTP ${res.status}`);
+    if (res.status === 422) {
+      throw new Error("Сервис не принял вопрос: проверьте длину и формулировку.");
+    }
+    throw new Error(
+      body.slice(0, 180) || `Сервис вернул ошибку ${res.status}.`,
+    );
   }
   return res.json() as Promise<LegalAskResponse>;
 }

@@ -1,241 +1,317 @@
-import { FormEvent, useMemo, useState } from "react";
-import {
-  askLegal,
-  LegalAskResponse,
-  LegalCitation,
-  LegalHistoryTurn,
-} from "@/lib/legal-api";
-import { DISCLAIMER_SHORT, PRODUCT_NAME } from "@/lib/brand";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, RotateCcw } from "lucide-react";
+import { askLegal } from "@/lib/legal-api";
+import type { LegalAskResponse, LegalHistoryTurn } from "@/lib/legal-api";
+import { MAX_QUESTION_CHARS } from "@/lib/config";
+import { verdictFor } from "@/lib/verdicts";
+import { Sidebar } from "@/components/Sidebar";
+import { Topbar } from "@/components/Topbar";
+import { Intro } from "@/components/Intro";
+import { AnswerCard } from "@/components/AnswerCard";
+import { EvidenceRail } from "@/components/EvidenceRail";
+import { Composer } from "@/components/Composer";
+import { NoiseOverlay } from "@/components/NoiseOverlay";
+import { useTheme } from "@/lib/use-theme";
 
-type Msg =
-  | { role: "user"; text: string }
-  | { role: "assistant"; payload: LegalAskResponse };
-
-const STATUS_LABEL: Record<string, string> = {
-  grounded: "Подтверждено источниками",
-  limited: "Частично подтверждено",
-  abstain: "Отказано — данных мало",
-  clarify: "Нужно уточнение",
-  refuse_role: "Вне компетенции",
+type Turn = {
+  id: number;
+  question: string;
+  payload?: LegalAskResponse;
+  error?: string;
+  elapsedMs?: number;
 };
 
-const MAX_CHARS = 4000;
+/** История для API: прошлые вопросы и ответы без текущего. */
+function toHistory(turns: Turn[]): LegalHistoryTurn[] {
+  const history: LegalHistoryTurn[] = [];
+  for (const turn of turns) {
+    history.push({ role: "user", content: turn.question });
+    if (turn.payload) {
+      history.push({ role: "assistant", content: turn.payload.answer });
+    }
+  }
+  return history;
+}
 
-const STARTERS = [
-  {
-    hint: "Договор аренды",
-    q: "Какая арендная плата по договору с ООО «Северный Склад» и до какого числа её нужно вносить?",
-  },
-  {
-    hint: "Трудовой кодекс",
-    q: "Какой максимальный срок испытания можно установить главному бухгалтеру?",
-  },
-  {
-    hint: "Если нормы нет",
-    q: "Какой размер пособия по беременности и родам?",
-  },
-];
-
+/**
+ * Рабочая зона: состояние диалога, отправка и повтор запроса,
+ * синхронизация активной цитаты, счётчики сессии и объявления
+ * для скринридера.
+ */
 export function LegalChat() {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [activeCite, setActiveCite] = useState<string | null>(null);
+  const [activeCitation, setActiveCitation] = useState<number | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const { theme, toggle: toggleTheme } = useTheme();
+
+  const threadRef = useRef<HTMLDivElement>(null);
+  const lastTurnRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const nextId = useRef(1);
+
+  const lastAnswerId = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      if (turns[i].payload) return turns[i].id;
+    }
+    return null;
+  }, [turns]);
 
   const citations = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role === "assistant" && m.payload.citations?.length) {
-        return m.payload.citations;
-      }
-    }
-    return [] as LegalCitation[];
-  }, [messages]);
+    const answer = turns.find((turn) => turn.id === lastAnswerId);
+    return answer?.payload?.citations ?? [];
+  }, [turns, lastAnswerId]);
 
-  const overLimit = input.length > MAX_CHARS;
-  const askDisabled = busy || !input.trim() || overLimit;
+  const stats = useMemo(() => {
+    const answered = turns.filter((turn) => turn.payload);
+    const citationsTotal = answered.reduce(
+      (sum, turn) => sum + (turn.payload?.citations?.length ?? 0),
+      0,
+    );
+    const times = answered
+      .map((turn) => turn.elapsedMs)
+      .filter((ms): ms is number => typeof ms === "number");
+    return {
+      questions: turns.length,
+      citations: citationsTotal,
+      averageMs: times.length
+        ? times.reduce((sum, ms) => sum + ms, 0) / times.length
+        : null,
+    };
+  }, [turns]);
 
-  function historyForAsk(nextUser: string): LegalHistoryTurn[] {
-    const turns: LegalHistoryTurn[] = [];
-    for (const m of messages) {
-      if (m.role === "user") {
-        turns.push({ role: "user", content: m.text });
+  /* Во время поиска — к концу ленты, после ответа — к его началу. */
+  useEffect(() => {
+    const last = turns[turns.length - 1];
+    if (!last) return;
+    if (!last.payload) {
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
       } else {
-        turns.push({ role: "assistant", content: m.payload.answer });
+        const el = threadRef.current;
+        el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      }
+      return;
+    }
+    lastTurnRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [turns, busy]);
+
+  /* «/» фокусирует поле вопроса, Esc — убирает фокус. */
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable;
+
+      if (event.key === "/" && !typing) {
+        event.preventDefault();
+        textareaRef.current?.focus();
+      }
+      if (event.key === "Escape" && target === textareaRef.current) {
+        textareaRef.current?.blur();
       }
     }
-    // API history excludes the current question (sent as `question`)
-    void nextUser;
-    return turns.slice(-10);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const send = useCallback(
+    async (raw: string, history: LegalHistoryTurn[]) => {
+      const question = raw.trim();
+      if (!question || busy) return;
+
+      const id = nextId.current++;
+      setTurns((prev) => [...prev, { id, question }]);
+      setBusy(true);
+      setActiveCitation(null);
+      setAnnouncement("Ищу ответ в базе знаний");
+      const started = performance.now();
+
+      try {
+        const payload = await askLegal(question, history);
+        setTurns((prev) =>
+          prev.map((turn) =>
+            turn.id === id
+              ? { ...turn, payload, elapsedMs: performance.now() - started }
+              : turn,
+          ),
+        );
+        setActiveCitation(payload.citations?.length ? 1 : null);
+
+        const verdict = verdictFor(payload);
+        const count = payload.citations?.length ?? 0;
+        setAnnouncement(
+          count > 0
+            ? `Ответ готов: ${verdict.label.toLowerCase()}, ${count} ${count === 1 ? "цитата" : "цитаты"}.`
+            : `Ответ готов: ${verdict.label.toLowerCase()}, без цитат.`,
+        );
+      } catch (err) {
+        const message =
+          err instanceof TypeError
+            ? "Запрос не дошёл до сервиса ответа. Проверьте подключение и повторите."
+            : err instanceof Error && err.message
+              ? err.message.slice(0, 240)
+              : "Сервис ответа недоступен.";
+        setTurns((prev) =>
+          prev.map((turn) => (turn.id === id ? { ...turn, error: message } : turn)),
+        );
+        setAnnouncement("Ответ не получен. Можно повторить запрос.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy],
+  );
+
+  function submitQuestion(question: string, base: Turn[] = turns) {
+    void send(question, toHistory(base).slice(-10));
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    const q = input.trim();
-    if (!q || askDisabled) return;
+  function submitFromComposer() {
+    const question = input.trim();
+    if (!question || question.length > MAX_QUESTION_CHARS) return;
     setInput("");
-    setError(null);
-    setActiveCite(null);
-    const hist = historyForAsk(q);
-    setMessages((prev) => [...prev, { role: "user", text: q }]);
-    setBusy(true);
-    try {
-      const payload = await askLegal(q, hist);
-      setMessages((prev) => [...prev, { role: "assistant", payload }]);
-      if (payload.citations?.[0]) {
-        setActiveCite(payload.citations[0].doc_id);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка запроса");
-    } finally {
-      setBusy(false);
-    }
+    if (textareaRef.current) textareaRef.current.style.height = "";
+    submitQuestion(question);
+  }
+
+  /** Повтор упавшего запроса: тот же вопрос, история без него. */
+  function retryTurn(id: number) {
+    if (busy) return;
+    const index = turns.findIndex((turn) => turn.id === id);
+    if (index < 0) return;
+    const question = turns[index].question;
+    const before = turns.slice(0, index);
+    setTurns(before);
+    submitQuestion(question, before);
+  }
+
+  function useExample(question: string) {
+    setInput(question);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+    });
+  }
+
+  function reset() {
+    if (busy) return;
+    setTurns([]);
+    setInput("");
+    setActiveCitation(null);
+    setAnnouncement("Диалог очищен");
+    textareaRef.current?.focus();
   }
 
   return (
-    <div className="legal-shell">
-      <header className="legal-header">
-        <span className="legal-mark" aria-hidden />
-        <div className="legal-brand">
-          <h1>{PRODUCT_NAME}</h1>
-          <p>{DISCLAIMER_SHORT}</p>
-        </div>
-      </header>
+    <div className="shell">
+      <div className="backdrop" aria-hidden />
+      <NoiseOverlay />
 
-      <div className="legal-main">
-        <section className="legal-chat" aria-live="polite">
-          <div className="legal-thread">
-            {messages.length === 0 && (
-              <div className="legal-empty">
-                <p className="legal-empty-kicker">База знаний</p>
-                <p className="legal-empty-title">
-                  Спросите по документам, которые есть в базе
-                </p>
-                <div className="legal-starters">
-                  {STARTERS.map((item, i) => (
-                    <button
-                      key={item.q}
-                      type="button"
-                      className={
-                        i === 0 ? "legal-starter is-lead" : "legal-starter"
-                      }
-                      onClick={() => {
-                        setInput(item.q);
-                        setError(null);
-                      }}
-                    >
-                      <span className="legal-starter-hint">{item.hint}</span>
-                      <span className="legal-starter-q">{item.q}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {messages.map((m, idx) =>
-              m.role === "user" ? (
-                <div key={idx} className="legal-bubble user">
-                  {m.text}
-                </div>
-              ) : (
-                <div
-                  key={idx}
-                  className={`legal-bubble assistant status-${m.payload.status}`}
-                >
-                  <div className="legal-meta">
-                    {STATUS_LABEL[m.payload.status] ?? m.payload.status}
+      <Sidebar
+        onExample={useExample}
+        onReset={reset}
+        canReset={turns.length > 0 && !busy}
+      />
+
+      <main className="main">
+        <Topbar
+          onReset={reset}
+          canReset={turns.length > 0 && !busy}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+
+        <div className="workspace">
+          <div className="chat-col">
+            <div className="thread" ref={threadRef}>
+              <div className={`thread-inner${turns.length > 0 ? " is-thread" : ""}`}>
+                {turns.length === 0 && !busy && <Intro onPick={useExample} />}
+
+                {turns.map((turn, index) => (
+                  <div
+                    className="turn"
+                    key={turn.id}
+                    ref={index === turns.length - 1 ? lastTurnRef : undefined}
+                  >
+                    <div className="turn-user">
+                      <p className="user-bubble">{turn.question}</p>
+                    </div>
+
+                    {turn.payload ? (
+                      <AnswerCard
+                        payload={turn.payload}
+                        elapsedMs={turn.elapsedMs ?? null}
+                        activeCitation={activeCitation}
+                        isLatest={turn.id === lastAnswerId}
+                        onActivate={setActiveCitation}
+                        onPickOption={useExample}
+                      />
+                    ) : turn.error ? (
+                      <div className="error-card" role="alert">
+                        <AlertTriangle size={16} strokeWidth={1.8} aria-hidden />
+                        <div className="error-card-body">
+                          <b>Ответ не получен</b>
+                          <p>{turn.error}</p>
+                          <button
+                            type="button"
+                            className="retry-btn"
+                            onClick={() => retryTurn(turn.id)}
+                            disabled={busy}
+                          >
+                            <RotateCcw size={13} strokeWidth={1.8} aria-hidden />
+                            Повторить
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="loading-card" aria-busy="true">
+                        <div className="loading-head">
+                          <span className="spinner" aria-hidden />
+                          Ищу в базе знаний
+                        </div>
+                        <div className="loading-lines" aria-hidden>
+                          <span className="skeleton-line" />
+                          <span className="skeleton-line" />
+                          <span className="skeleton-line" />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <p>{m.payload.answer}</p>
-                  {m.payload.options && m.payload.options.length > 0 && (
-                    <ul className="legal-missing">
-                      {m.payload.options.map((opt) => (
-                        <li key={opt}>{opt}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {m.payload.missing?.length > 0 && (
-                    <div className="legal-missing-block">
-                      <div className="legal-missing-label">Не хватает</div>
-                      <ul className="legal-missing">
-                        {m.payload.missing.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {m.payload.citations?.length > 0 && (
-                    <div className="legal-inline-cites">
-                      {m.payload.citations.map((c, i) => (
-                        <button
-                          key={`${c.doc_id}-${i}`}
-                          type="button"
-                          className={
-                            activeCite === c.doc_id
-                              ? "legal-cite is-active"
-                              : "legal-cite"
-                          }
-                          onClick={() => setActiveCite(c.doc_id)}
-                        >
-                          [{i + 1}] {c.span || c.title}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ),
-            )}
-            {error && <div className="legal-error">{error}</div>}
+                ))}
+              </div>
+            </div>
+
+            <Composer
+              value={input}
+              busy={busy}
+              onChange={setInput}
+              onSubmit={submitFromComposer}
+              textareaRef={textareaRef}
+            />
           </div>
 
-          <form className="legal-composer" onSubmit={onSubmit}>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Вопрос по нормативным документам"
-              aria-label="Вопрос по нормативным документам"
-              aria-invalid={overLimit}
-              maxLength={MAX_CHARS + 50}
-            />
-            <button
-              type="submit"
-              className="legal-ask"
-              aria-disabled={askDisabled}
-              disabled={askDisabled}
-            >
-              {busy ? "Ищем…" : "Спросить"}
-            </button>
-          </form>
-          {overLimit && (
-            <p className="legal-error">Лимит {MAX_CHARS} символов</p>
-          )}
-        </section>
+          <EvidenceRail
+            citations={citations}
+            activeIndex={activeCitation}
+            onSelect={setActiveCitation}
+            hasAnswer={lastAnswerId !== null}
+            loading={busy}
+            stats={stats}
+            onAsk={() => textareaRef.current?.focus()}
+          />
+        </div>
+      </main>
 
-        <aside className="legal-aside">
-          <h2>Подтверждения</h2>
-          {citations.length === 0 ? (
-            <p className="legal-aside-empty">
-              {messages.some((m) => m.role === "assistant")
-                ? "В этом ответе нет цитат: вопрос не про базу или подтверждающих положений не нашлось."
-                : "Фрагменты документов появятся после ответа с цитатами"}
-            </p>
-          ) : (
-            citations.map((c, i) => (
-              <article
-                key={`${c.doc_id}-${i}`}
-                id={`cite-${c.doc_id}`}
-                className={`legal-frag${activeCite === c.doc_id ? " legal-frag-active" : ""}`}
-              >
-                <div className="legal-frag-doc">
-                  <span className="legal-frag-index">{i + 1}</span>
-                  <span className="legal-frag-title">{c.title}</span>
-                  {c.span ? <span className="legal-span">{c.span}</span> : null}
-                </div>
-                <p>{c.quote}</p>
-              </article>
-            ))
-          )}
-        </aside>
-      </div>
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {announcement}
+      </p>
     </div>
   );
 }
