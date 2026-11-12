@@ -1,0 +1,6 @@
+etalon: artifacts/psb_submission_score_19.zip (= dist/psb_submission_best.zip = psb_submission (4).zip)
+platform_score: ~19 (user)
+md5: 38c9e34c4191ee5c73ec01f744f17023
+size: 40503
+frozen: 2026-11-12T11:32
+note: dist/psb_submission.zip may be a climb candidate; do not overwrite score_19 / best without a higher platform score.

@@ -189,6 +189,13 @@ def _relevance_boost(question: str, row: dict) -> float:
         if not any(k in blob for k in ("качеств", "приёмк", "приемк", "рабоч")):
             boost -= 6.0
 
+    # Archive loan term (3 working days) vs post-signature original handoff.
+    if any(k in q for k in ("архив", "выдач", "четыре")):
+        if any(k in blob for k in ("архив", "выдач", "не более 3", "трёх", "трех", "юо-7")):
+            boost += 12.0
+        if "подписанный оригинал" in blob and "архив" not in blob:
+            boost -= 10.0
+
     # Superseded editions: demote unless the question asks about old/repealed text.
     if row.get("superseded") or "утратил силу" in blob or "утратила силу" in blob:
         if not any(k in q for k in ("утративш", "старой", "редакци 20", "в 20")):

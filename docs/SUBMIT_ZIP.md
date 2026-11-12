@@ -28,4 +28,4 @@ DATA_DIR=data/organizer/tests PSB_KB_PATH=data/organizer/kb \
   MAX_WORKERS=2 python3 solution.py --out /tmp/submission.csv
 ```
 
-Демо-скорборд: `python3 scripts/run_demo_scoreboard.py` → `reports/demo_q_scoreboard.md`.
+Демо-скорборд: `python3 scripts/run_demo_scoreboard.py` (по умолчанию пишет в `reports/`; каталог можно держать в `../рабочие файлы псб/reports/`).

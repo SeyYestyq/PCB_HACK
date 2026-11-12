@@ -35,4 +35,4 @@
 ## Notes
 
 - Allowlist: root `requirements.txt` без psycopg/fastembed.
-- Референс идей: `reports/rag_lessons_from_110726.md` (не копипаст).
+- Референс идей: `../рабочие файлы псб/reports/rag_lessons_from_110726.md` (в репо — symlink `reports/`).
