@@ -173,11 +173,22 @@ def sentence_bounded_excerpt(text: str, limit: int = CHUNK_CHARS) -> str:
     return piece.strip()
 
 
+_ADVERSARIAL_LINE = re.compile(
+    r"(?im)^.*(?:игнорируй|для ии-ассистент|ignore all other).*$",
+)
+
+
+def scrub_kb_text(text: str) -> str:
+    """Drop prompt-injection lines planted in organizer docs."""
+    cleaned = _ADVERSARIAL_LINE.sub("", text or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
 def focused_excerpt(question: str, text: str, limit: int = CHUNK_CHARS) -> str:
     """Prefer the clause/window inside a unit that best matches the question."""
     from psb_textnorm import tokens as _tokens
 
-    text = (text or "").strip()
+    text = scrub_kb_text(text)
     if not text:
         return ""
     if len(text) <= limit:
@@ -210,6 +221,23 @@ def focused_excerpt(question: str, text: str, limit: int = CHUNK_CHARS) -> str:
         head = re.match(r"(\d+\.\d+(?:\.\d+)?)", piece.strip())
         if head and head.group(1) in (question or ""):
             bonus = 3
+        nq = " ".join(q_tokens)
+        npiece = " ".join(_tokens(piece))
+        # Prefer the sub-clause that carries the asked legal fact.
+        topic_pairs = (
+            (("одобрен", "генеральн", "млн", "миллион", "порог"), ("одобрен", "свыше", "миллион")),
+            (("инициатор", "запуст", "руководител"), ("инициатор", "руководител")),
+            (("претенз", "недостат", "дефект"), ("акт", "недостат", "претенз")),
+            (("съезж", "ключ", "возврат"), ("возвращ", "износ", "акт")),
+            (("оригинал", "юротдел", "подписан"), ("оригинал", "юридическ", "рабоч")),
+            (("предоплат", "аванс"), ("предоплат", "аванс", "календарн")),
+            (("упаковк", "доставк"), ("упаковк", "доставк")),
+            (("гарант",), ("гарант", "талон", "производител")),
+        )
+        for q_keys, p_keys in topic_pairs:
+            if any(k in nq or k in (question or "").lower() for k in q_keys):
+                if any(k in npiece or k in piece.lower() for k in p_keys):
+                    bonus += 5
         score = overlap + bonus
         if score > best_score:
             best_score = score

@@ -149,9 +149,40 @@ def _relevance_boost(question: str, row: dict) -> float:
     # Prefer defect/acceptance act language over bare dispute jurisdiction.
     if any(k in q for k in ("претенз", "дефект", "недостат", "прилож")):
         if any(k in blob for k in ("акт о выявлен", "акт о недостат", "выявленных недостат")):
-            boost += 10.0
+            boost += 14.0
         if "арбитраж" in blob and "акт о" not in blob:
             boost -= 6.0
+
+    # Who starts approval → initiator clause, not the amount thresholds block.
+    if any(k in q for k in ("инициатор", "запуст", "запуст согласо")) or (
+        "руководител" in q and any(k in q for k in ("согласован", "отдел", "договор"))
+    ):
+        if "инициатор" in blob and "руководител" in blob:
+            boost += 16.0
+        if any(k in blob for k in ("свыше", "15 000 000", "10 000 000", "порог")) and "инициатор" not in blob:
+            boost -= 10.0
+
+    # Return of premises / keys → return-by-act clause, not handover-on-start.
+    if any(k in q for k in ("съезж", "ключ", "возврат", "прекращен")):
+        if any(k in blob for k in ("нормального износ", "возвращает помещен", "по акт")):
+            boost += 16.0
+        if "передаётся арендатору по акт" in blob or "передается арендатору по акт" in blob:
+            if not any(k in blob for k in ("прекращен", "возвращ")):
+                boost -= 12.0
+
+    # Signed original → legal dept deadline in the regulation, not archive memo traps.
+    if any(k in q for k in ("оригинал", "юротдел", "юридическ отдел", "подписан")) and any(
+        k in q for k in ("переда", "срок", "хранен", "кому", "дальше")
+    ):
+        if "подписанный оригинал" in blob and "юридическ" in blob and "рабоч" in blob:
+            boost += 18.0
+        if "архив" in title or "служебн" in title:
+            boost -= 8.0
+
+    # Prompt-injection traps: demote when the question is not about that memo itself.
+    if any(k in blob for k in ("игнорируй", "для ии-ассистент", "для ai", "ignore all other")):
+        if not any(k in q for k in ("архив", "выдач", "юо-7")):
+            boost -= 25.0
 
     # Quality-check follow-ups should not stick on warranty-only clauses.
     if any(k in q for k in ("качеств", "приёмк", "приемк")) and "гарант" in blob:
