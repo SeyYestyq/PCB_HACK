@@ -139,7 +139,9 @@ ORACLES: dict[str, Oracle] = {
         note="на испытании — обычные трудовые правила",
     ),
     "13": Oracle(
-        status="grounded",
+        # Organizer golden is partial (ст.9 + missing 6/10/11) → limited OK; grounded still acceptable.
+        status=None,
+        status_not=("abstain", "refuse_role", "clarify"),
         min_citations=1,
         answer_any=("соглас",),
         cite_any=("152", "соглас", "персональн"),

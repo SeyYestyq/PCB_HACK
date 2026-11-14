@@ -1,6 +1,25 @@
-etalon: artifacts/psb_submission_score_19.zip (= dist/psb_submission_best.zip = psb_submission (4).zip)
-platform_score: ~19 (user)
+etalon: artifacts/psb_submission_score_19.zip (= dist/psb_submission_best.zip)
+platform_score: 19.452 (best @ 11:25)
 md5: 38c9e34c4191ee5c73ec01f744f17023
 size: 40503
-frozen: 2026-11-12T11:32
-note: dist/psb_submission.zip may be a climb candidate; do not overwrite score_19 / best without a higher platform score.
+
+failed_climbs:
+- 11:39 → 16.482 (soft-cite)
+- 11:49 → 17.333
+- 12:45 → 18.285 (hedge+number-peek)
+- 23:20 → 13.472 (PDN+law-slug+11152)
+- 23:58 → 15.268 (H1 PDN) CLOSED
+- 02:20 → 14.732 (H3 edition-suffix) CLOSED
+- 11:05 → 18.381 (H5 alone) CLOSED as sole submit; code reused as base
+
+H2: CLOSED locally (llm_top1)
+
+climb_pending (H5+H4: date≠claim + soft cite_named):
+- dist/psb_submission.zip
+- md5: 3774b1ff6124f751caf0e9ca86d14a20
+- size: 40894
+- local: 4×18/18 + 1×17 (Q14 limited flake); Q5 LLM ~325 chars
+- Kill: platform < 19.452 → rollback 38c9e34…
+
+Closed alone: PDN, soft-cite, hedge, peek, law-slug, llm_top1, edition-drop, H5-alone.
+rule: local ≠ platform. Best ZIP never overwritten without beating 19.452.

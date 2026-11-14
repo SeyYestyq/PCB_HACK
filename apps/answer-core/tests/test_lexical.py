@@ -7,6 +7,7 @@ from psb_catalog import build_catalog, match_catalog
 from psb_editions import extract_event_date, filter_kb_by_edition
 from psb_pipeline import (
     Citation,
+    _cite_named_in,
     _citations_verified,
     _extract_claim_numbers,
     _numbers_grounded,
@@ -163,6 +164,29 @@ def test_claim_numbers_scale_million():
     assert "10000000" in _extract_claim_numbers("порог 10 млн рублей")
     assert "10000000" in _extract_claim_numbers("порог 10 000 000 рублей")
     assert "450000" in _extract_claim_numbers("плата 450 000 руб.")
+
+
+def test_claim_numbers_skip_dotted_dates():
+    """H5: DD.MM.YYYY must not yield fake claim DD.MM."""
+    claims = _extract_claim_numbers(
+        "редакция утратила силу с 01.03.2025; порог 10 000 000 рублей"
+    )
+    assert "01.03" not in claims
+    assert "10000000" in claims
+
+
+def test_cite_named_soft_edition_punctuation():
+    """H4: LLM «ред. 2023» matches title «ред 2023 (утратил силу)»."""
+    cite = Citation(
+        doc_id="reg-2023",
+        title="документы компании — Регламент согласования договоров ред 2023 (утратил силу)",
+        span="п. 2.1",
+        quote="порог 10 000 000",
+    )
+    ans = (
+        "Да, нужно было одобрение (Регламент согласования договоров ред. 2023, п. 2.4)."
+    )
+    assert _cite_named_in(ans, cite)
 
 
 def test_numbers_grounded_rejects_invented_amount():
