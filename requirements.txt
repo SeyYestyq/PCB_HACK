@@ -1,2 +1,4 @@
-# Platform ZIP submit — stdlib-only runtime for solution.py / psb_*.py.
-# FastAPI stack lives in apps/answer-core/requirements.txt for the web prototype.
+# Платформенный прокси вызывается через httpx: он приносит свой CA-бандл (certifi).
+# Голый urllib в slim-контейнере без ca-certificates падает на TLS — решение это переживает,
+# но httpx из разрешённого набора снимает проблему целиком.
+httpx==0.28.1
